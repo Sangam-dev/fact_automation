@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import json
 import logging
 import os
 import platform
@@ -25,13 +24,13 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Sequence
 
 from core.config import (
     ConfigError,
     load_config,
     load_env,
     project_root,
-    resolve_path,
 )
 from core.logging.setup import mask_secret, setup_logging
 from core.state.run_lock import RunLock, RunLockError
@@ -199,14 +198,15 @@ def run_inspect(config_path: str, annotate: bool = True, max_elements: int = 300
     """Capture the target window and list its UIA controls."""
     from desktop.screenshots.capture import CaptureError, capture_window
     from desktop.screenshots.images import annotate_candidates
+    from desktop.state.fact import FactError, attach_target
     from desktop.uia.uia import UIAError, inspect_window
-    from desktop.windows.window import WindowError, attach_window
+    from desktop.windows.window import WindowError
 
     try:
         config = load_config(config_path)
-        window = attach_window(config.app)
+        window = attach_target(config.app)
         capture = capture_window(window)
-    except (ConfigError, WindowError, CaptureError) as exc:
+    except (ConfigError, FactError, WindowError, CaptureError) as exc:
         print(f"ERROR: {exc}")
         return 1
 
@@ -273,8 +273,9 @@ def run_ground(config_path: str, fields: str, annotate: bool = True) -> int:
     from ai.providers.gemini import GeminiClient, GeminiError
     from desktop.screenshots.capture import CaptureError, capture_window
     from desktop.screenshots.images import annotate_boxes
+    from desktop.state.fact import FactError, attach_target
     from desktop.uia.uia import UIAError, inspect_window
-    from desktop.windows.window import WindowError, attach_window
+    from desktop.windows.window import WindowError
 
     field_names = [item.strip() for item in fields.split(",") if item.strip()]
     if not field_names:
@@ -283,10 +284,10 @@ def run_ground(config_path: str, fields: str, annotate: bool = True) -> int:
     try:
         config = load_config(config_path)
         client = GeminiClient(config.gemini)
-        window = attach_window(config.app)
+        window = attach_target(config.app)
         capture = capture_window(window)
         inspection = inspect_window(window)
-    except (ConfigError, GeminiError, WindowError, CaptureError, UIAError) as exc:
+    except (ConfigError, FactError, GeminiError, WindowError, CaptureError, UIAError) as exc:
         print(f"ERROR: {exc}")
         return 1
 
@@ -410,8 +411,9 @@ def run_form(
     from core.safety.hotkeys import HotkeyError, hotkeys_from_config
     from core.safety.overlay import NullOverlay, StatusOverlay
     from desktop.screenshots.capture import CaptureError
+    from desktop.state.fact import FactError, attach_target
     from desktop.uia.uia import UIAError
-    from desktop.windows.window import WindowError, attach_window
+    from desktop.windows.window import WindowError
     from execution.verification.confirmation import GeminiTextReader, TextConfirmation
     from execution.workflows.runner import SAVED, load_values, run_workflow
 
@@ -464,7 +466,7 @@ def run_form(
             on_state=_state_printer(labels),
         )
 
-        window = attach_window(config.app)
+        window = attach_target(config.app)
         print(f"Window: 0x{window.handle:X} {window.title!r}")
         print(
             f"Workflow: {len(config.workflow.steps)} step(s), "
@@ -494,6 +496,7 @@ def run_form(
             print(f"  evidence: {shot}")
         return 0 if outcome.status == SAVED else 1
     except (
+        FactError,
         WindowError,
         CaptureError,
         UIAError,
@@ -527,8 +530,10 @@ def run_automation_command(
     from desktop.uia.uia import UIAError
     from desktop.windows.window import WindowError
     from execution.verification.confirmation import GeminiTextReader, TextConfirmation
+    from desktop.app.launch import LaunchError, ensure_running
+    from desktop.state.fact import is_fact
     from execution.workflows.automation_runner import run_automation
-    from execution.workflows.runner import load_values
+    from execution.workflows.runner import load_values_with_rows
 
     from core.automation.model import AutomationError
     from core.automation.registry import load as load_automation
@@ -544,11 +549,25 @@ def run_automation_command(
         print(f"ERROR: {exc}")
         return 2
 
+    started = False
     try:
-        values = load_values(values_path)
+        if is_fact(config.app):
+            started = ensure_running(output=print)
+    except LaunchError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+    if started:
+        print("  FACT was started for this run")
+
+    try:
+        values, rows = load_values_with_rows(values_path)
     except Exception as exc:  # noqa: BLE001 - any read problem is the same answer
         print(f"ERROR: {exc}")
         return 2
+    if rows:
+        print(
+            f"  one document: {len(rows)} line row(s), saved once at the end"
+        )
 
     lock = RunLock()
     try:
@@ -578,6 +597,8 @@ def run_automation_command(
         run = run_automation(
             name,
             values,
+            rows=rows,
+            values_file=values_path,
             saved_already=saved_already,
             not_saved=not_saved,
             restart=restart,
@@ -600,9 +621,204 @@ def run_automation_command(
         lock.release()
 
 
+def run_register(
+    name: str,
+    config_path: str,
+    values_path: str | None = None,
+    *,
+    dry_run: bool = False,
+    overlay: bool = True,
+    env_path: str | None = None,
+) -> int:
+    """Prove a workflow config on the live screen and register it as an automation."""
+    from core.automation.model import AutomationError
+    from core.safety.controller import SafetyController
+    from core.safety.hotkeys import HotkeyError, hotkeys_from_config
+    from core.safety.overlay import NullOverlay, StatusOverlay
+    from desktop.screenshots.capture import CaptureError
+    from desktop.uia.uia import UIAError
+    from desktop.windows.window import WindowError
+    from execution.workflows.runner import load_values
+    from wizard.register import REFUSED, describe_checkpoints, register_automation
+
+    load_env(env_path)
+
+    try:
+        config = load_config(config_path)
+    except ConfigError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+
+    values: dict[str, str] = {}
+    if values_path:
+        try:
+            values = load_values(values_path)
+        except Exception as exc:  # noqa: BLE001 - any read problem is the same answer
+            print(f"ERROR: {exc}")
+            return 2
+
+    lock = RunLock()
+    try:
+        lock.acquire(note=f"register:{name}")
+    except RunLockError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+
+    controller = None
+    try:
+        hotkeys = hotkeys_from_config(config.safety)
+        labels = {hotkey.action: hotkey.label for hotkey in hotkeys}
+        controller = SafetyController(
+            config.safety,
+            overlay=StatusOverlay(labels) if overlay else NullOverlay(),
+            on_state=_state_printer(labels),
+        )
+        print(f"Registering {name!r} from {config_path}")
+        print("  the proof pass runs the steps once and clicks Save once")
+        controller.start()
+
+        result = register_automation(
+            name=name,
+            config_path=config_path,
+            values=values,
+            # The proof runs a ``run`` step for real, so it gets the same file
+            # the automation will be given when it is run later.
+            values_file=values_path,
+            write=not dry_run,
+        )
+    except (
+        AutomationError,
+        WindowError,
+        CaptureError,
+        UIAError,
+        HotkeyError,
+    ) as exc:
+        print(f"ERROR: {exc}")
+        return 1
+    finally:
+        if controller is not None:
+            controller.close()
+        lock.release()
+
+    print()
+    if result.automation is not None:
+        print("Checkpoints proved by the run:")
+        for line in describe_checkpoints(result.automation):
+            print(f"  {line}")
+        print(f"  save: {result.automation.save.button!r} "
+              f"({result.automation.save.verifier} check)")
+    if result.path is not None:
+        print(f"  automation: {result.path}")
+    if result.launcher is not None:
+        print(f"  launcher:   {result.launcher}")
+    print(f"Outcome: {result.status} ({name})")
+    if result.message:
+        print(f"  {result.message}")
+    if result.ok and not dry_run:
+        print()
+        print(
+            f"Run it with: python cli.py automation run {name} --values <values.json>"
+        )
+        if result.launcher is not None:
+            print(f"or double-click {result.launcher.name} (a values.json beside it)")
+    return 0 if result.ok else (2 if result.status == REFUSED else 1)
+
+
+def run_write_launcher(name: str) -> int:
+    """(Re)write the double-clickable launcher for a registered automation."""
+    from core.automation.launcher import write_launcher
+    from core.automation.registry import AutomationError, load
+
+    try:
+        automation = load(name)
+    except AutomationError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+
+    try:
+        path = write_launcher(name)
+    except OSError as exc:
+        print(f"ERROR: the launcher could not be written: {exc}")
+        return 1
+
+    print(f"Launcher for {automation.name!r} ({len(automation.steps)} step(s)):")
+    print(f"  {path}")
+    print(
+        "Put a values.json beside it (or drag one onto it), then double-click "
+        "to run."
+    )
+    return 0
+
+
+def run_list_segments() -> int:
+    """List the designed segments that can be appended to an automation."""
+    from core.automation.segments import SegmentError, library_summary, load_segments
+
+    try:
+        table = load_segments()
+    except SegmentError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+    if not table.segments:
+        print("No designed segments yet; run python scripts/build_segments.py")
+        return 2
+    print(f"Designed segments ({len(table.segments)}):")
+    for line in library_summary(table):
+        print(f"  {line}")
+    return 0
+
+
+def run_append_automation(
+    name: str, segment_id: str, *, dry_run: bool = False
+) -> int:
+    """Append one designed segment to a registered automation."""
+    from core.automation.segments import (
+        SegmentError,
+        append_segment_to,
+        load_segments,
+    )
+    from desktop.state.states import StateTableError, load_state_table
+
+    try:
+        known = load_state_table().ids()
+    except StateTableError as exc:
+        print(f"ERROR: the state table cannot be used: {exc}")
+        return 2
+
+    try:
+        load_segments()
+    except SegmentError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+
+    result = append_segment_to(
+        name, segment_id, known_states=known, write=not dry_run
+    )
+    print()
+    if result.automation is not None:
+        print(f"Plan now ({len(result.automation.steps)} step(s)):")
+        for position, step in enumerate(result.automation.steps, start=1):
+            target = step.button if step.action == "click" else (step.field or step.key)
+            print(
+                f"  {position}. {step.action} {target!r} "
+                f"on {step.checkpoint.state}"
+            )
+    if result.path is not None:
+        print(f"  automation: {result.path}")
+    print(f"Outcome: {result.status} ({name} + {segment_id})")
+    if result.message:
+        print(f"  {result.message}")
+    if result.ok and not dry_run:
+        print()
+        print(
+            f"Run it with: python cli.py automation run {name} --values <values.json>"
+        )
+    return 0 if result.ok else (2 if result.status == "refused" else 1)
+
+
 def run_state(env_path: str | None = None) -> int:
     """Print which screen FACT is showing, and the evidence for it."""
-    from desktop.state.recognizer import detect
+    from desktop.state.fact import detect_state
     from desktop.state.states import StateTableError, load_state_table
 
     load_env(env_path)
@@ -611,7 +827,7 @@ def run_state(env_path: str | None = None) -> int:
     except StateTableError as exc:
         print(f"ERROR: {exc}")
         return 2
-    match = detect(table)
+    match = detect_state(table)
     print(match.message())
     if match.stack:
         print("  behind: " + " < ".join(match.stack))
@@ -641,6 +857,263 @@ def run_list_automations() -> int:
         where = f"step {item.cursor + 1}" if item.completed else "not started"
         state = "save unresolved" if item.save_unresolved else (item.outcome or "in progress")
         print(f"  {name}: {state}, {where}")
+    return 0
+
+
+def run_doctor(env_path: str | None = None) -> int:
+    """Check, in one command, whether this machine can run an automation."""
+    from core.automation.exceptions import RuleError, load_rules
+    from core.automation.progress import ProgressError, load_progress
+    from core.automation.registry import AutomationError, list_automations
+    from core.automation.registry import load as load_automation
+    from desktop.state.states import StateTableError, load_state_table
+
+    load_env(env_path)
+    failures = 0
+    warnings = 0
+
+    def line(status: str, name: str, detail: str = "") -> None:
+        nonlocal failures, warnings
+        if status == "FAIL":
+            failures += 1
+        elif status == "WARN":
+            warnings += 1
+        print(f"[{status:^4}] {name}" + (f": {detail}" if detail else ""))
+
+    print(f"FACT Automation v{__version__} - doctor")
+    print("-" * 72)
+
+    version = sys.version_info
+    line(
+        "OK" if version >= (3, 11) else "FAIL",
+        "Python",
+        f"{version.major}.{version.minor}.{version.micro} (needs >= 3.11)",
+    )
+    for module_name in ("pywinauto", "comtypes", "PIL", "google.genai"):
+        ok, detail = _import_check(module_name)
+        line("OK" if ok else "FAIL", f"dependency {module_name}", detail)
+
+    # The application: where it is, and whether it is open right now.
+    from desktop.app.launch import (
+        LaunchError,
+        app_config_path,
+        is_running,
+        load_app_paths,
+    )
+
+    try:
+        paths = load_app_paths()
+    except LaunchError as exc:
+        line("FAIL", "config/app.json", str(exc))
+        paths = None
+    if paths is not None:
+        if paths.exe_path and paths.exists():
+            line("OK", "FACT executable", paths.exe_path)
+        elif paths.exe_path:
+            line("FAIL", "FACT executable", f"not found: {paths.exe_path}")
+        else:
+            line(
+                "WARN",
+                "FACT executable",
+                f"exe_path is empty in {app_config_path()}; runs then need FACT already open",
+            )
+
+    try:
+        table = load_state_table()
+        line("OK", "state table", f"{len(table.states)} state(s): {', '.join(table.ids())}")
+        thin = [item.id for item in table.states if getattr(item, "samples", 1) < 2]
+        if thin:
+            line(
+                "WARN",
+                "state samples",
+                "learned from one snapshot each: " + ", ".join(thin)
+                + " (scripts/snapshots.py captures more)",
+            )
+        # Deliberately a fast window check, not a screen read: doctor must answer
+        # in a second, and recognition is a run's job (``automation state``).
+        if is_running(paths.process if paths else None):
+            line(
+                "OK",
+                "FACT right now",
+                "running; `python cli.py automation state` names the screen",
+            )
+        else:
+            line(
+                "WARN",
+                "FACT right now",
+                "not running; a run will start it if exe_path is set",
+            )
+    except StateTableError as exc:
+        line("FAIL", "state table", str(exc))
+
+    names = list_automations()
+    if not names:
+        line("WARN", "automations", "none yet; run cli.py wizard and register one")
+    for name in names:
+        try:
+            plan = load_automation(name)
+            plan.validate_states(load_state_table().ids())
+            rules = load_rules(name)
+            progress = load_progress(name)
+        except (AutomationError, StateTableError, RuleError, ProgressError) as exc:
+            line("FAIL", f"automation {name}", str(exc))
+            continue
+        count = len(rules.rules) if rules else 0
+        where = (
+            "never run"
+            if progress is None
+            else f"last run {progress.outcome or 'in progress'}, step {progress.cursor + 1}"
+        )
+        line(
+            "OK",
+            f"automation {name}",
+            f"{len(plan.steps)} step(s), {len(plan.state_ids())} screen(s), "
+            f"{count} learned rule(s), {where}",
+        )
+
+    print("-" * 72)
+    if failures:
+        print(f"{failures} problem(s) to fix, {warnings} warning(s).")
+        return 1
+    print(f"Ready. ({warnings} warning(s))")
+    return 0
+
+
+def run_learn_rule(
+    name: str,
+    *,
+    clicks: Sequence[str] = (),
+    doubles: Sequence[str] = (),
+    keys: str = "",
+    expect: str = "",
+    description: str = "",
+    rule_id: str | None = None,
+    env_path: str | None = None,
+) -> int:
+    """Learn the screen FACT is showing now as a way past it."""
+    from core.automation.exceptions import (
+        Observation,
+        RuleAction,
+        RuleError,
+        RuleTable,
+        load_rules,
+        rule_from_screen,
+        save_rules,
+    )
+    from core.automation.registry import AutomationError
+    from core.automation.registry import load as load_automation
+    from desktop.state.fact import FactError, read_current
+    from desktop.state.states import StateTableError, load_state_table
+
+    load_env(env_path)
+    try:
+        load_automation(name)
+    except AutomationError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+
+    actions = [RuleAction(action="click", button=item) for item in clicks]
+    actions += [RuleAction(action="double_click", button=item) for item in doubles]
+    if keys.strip():
+        actions.append(RuleAction(action="key", keys=keys.strip()))
+    if not actions:
+        print(
+            "ERROR: nothing to learn; pass --click \"OK\", --double-click ... "
+            "or --key Enter"
+        )
+        return 2
+
+    try:
+        known = load_state_table().ids()
+    except StateTableError as exc:
+        print(f"ERROR: the state table cannot be used: {exc}")
+        return 2
+    if expect and expect not in known:
+        print(
+            f"ERROR: --expect {expect!r} is not a known screen; known: "
+            + ", ".join(known)
+        )
+        return 2
+
+    try:
+        window, inspection, match = read_current(seconds=5.0)
+    except FactError as exc:
+        print(f"ERROR: {exc}")
+        return 1
+
+    seen = Observation(
+        state=match.state_id,
+        title=window.title,
+        class_name=window.class_name,
+        auto_ids=tuple(
+            item.automation_id
+            for item in inspection.candidates
+            if item.automation_id
+        ),
+    )
+
+    try:
+        table = load_rules(name) or RuleTable(automation=name)
+    except RuleError as exc:
+        print(f"ERROR: {exc}")
+        return 1
+
+    identifier = (rule_id or "").strip() or f"{match.state_id.lower()}-{len(table.rules) + 1}"
+    try:
+        rule = rule_from_screen(
+            identifier,
+            seen,
+            actions,
+            expect=expect,
+            description=description,
+        )
+        table.add(rule)
+        path = save_rules(table)
+    except (RuleError, ValueError) as exc:
+        print(f"ERROR: {exc}")
+        return 1
+
+    print(f"Learned rule {rule.id!r} for {name!r}:")
+    print(f"  {rule.describe()}")
+    print(f"  trigger: {rule.when.describe()}")
+    print(f"  rules:   {path}")
+    print(
+        "  The next run applies it automatically, with no model call; "
+        "edit that file to add a 'not this' condition."
+    )
+    return 0
+
+
+def run_rules(name: str) -> int:
+    """List the situations an automation has learned to handle."""
+    from core.automation.exceptions import RuleError, describe_rules, load_rules
+
+    try:
+        table = load_rules(name)
+    except RuleError as exc:
+        print(f"ERROR: {exc}")
+        return 1
+    print(f"Learned rules for {name!r}:")
+    for rule in describe_rules(table):
+        print(f"  {rule}")
+    return 0
+
+
+def run_forget_rule(name: str, rule_id: str) -> int:
+    """Remove one learned rule."""
+    from core.automation.exceptions import RuleError, load_rules, save_rules
+
+    try:
+        table = load_rules(name)
+        if table is None:
+            print(f"ERROR: {name!r} has learned no rules")
+            return 2
+        table.remove(rule_id)
+        save_rules(table)
+    except RuleError as exc:
+        print(f"ERROR: {exc}")
+        return 1
+    print(f"Forgot {rule_id!r}; {name!r} now knows {len(table.rules)} rule(s).")
     return 0
 
 
@@ -688,12 +1161,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--agent",
         action="store_true",
-        help="start the interactive workflow wizard",
+        help="start the FACT ERP.NG workflow wizard",
     )
     parser.add_argument(
         "--agent-ui",
         action="store_true",
-        help="start the wizard in the floating chat window",
+        help="start the FACT ERP.NG wizard in the floating chat window",
     )
     parser.add_argument(
         "--values",
@@ -765,6 +1238,88 @@ def build_parser() -> argparse.ArgumentParser:
     )
     automation_run.add_argument("--no-overlay", action="store_true")
 
+    automation_register = automation_sub.add_parser(
+        "register",
+        help="prove a workflow config once and save it as an automation",
+    )
+    automation_register.add_argument("name", help="the name to register it under")
+    automation_register.add_argument(
+        "--config",
+        dest="sub_config",
+        required=True,
+        help="a workflow config written by the wizard",
+    )
+    automation_register.add_argument(
+        "--values",
+        dest="sub_values",
+        default=None,
+        help="JSON object of field -> value, typed during the proof run",
+    )
+    automation_register.add_argument("--env-file", dest="sub_env", default=None)
+    automation_register.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "prove the steps (one record is still saved) without writing the "
+            "automation"
+        ),
+    )
+    automation_register.add_argument("--no-overlay", action="store_true")
+
+    automation_append = automation_sub.add_parser(
+        "append", help="append one designed segment to an automation"
+    )
+    automation_append.add_argument("name", help="the registered automation")
+    automation_append.add_argument("segment", help="the segment id, from `automation segments`")
+    automation_append.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="show the resulting plan without writing it",
+    )
+    automation_script = automation_sub.add_parser(
+        "script", help="write the double-clickable launcher for an automation"
+    )
+    automation_script.add_argument("name", help="the registered automation")
+
+    automation_rules = automation_sub.add_parser(
+        "rules", help="list the situations an automation has learned"
+    )
+    automation_rules.add_argument("name", help="the registered automation")
+
+    automation_learn = automation_sub.add_parser(
+        "learn", help="teach the screen FACT is showing now as a way past it"
+    )
+    automation_learn.add_argument("name", help="the registered automation")
+    automation_learn.add_argument(
+        "--click", action="append", default=[], metavar="BUTTON",
+        help="click this control; repeat for more clicks, in order",
+    )
+    automation_learn.add_argument(
+        "--double-click", dest="double_click", action="append", default=[],
+        metavar="BUTTON", help="double-click this control; repeat for more",
+    )
+    automation_learn.add_argument(
+        "--key", dest="keys", default="", metavar="KEYS",
+        help="press this key after the clicks, e.g. Enter or Ctrl+S",
+    )
+    automation_learn.add_argument(
+        "--expect", default="", metavar="STATE",
+        help="the screen that must be showing afterwards (a state id)",
+    )
+    automation_learn.add_argument("--description", default="")
+    automation_learn.add_argument("--id", dest="rule_id", default=None)
+    automation_learn.add_argument("--env-file", dest="sub_env", default=None)
+
+    automation_forget = automation_sub.add_parser(
+        "forget", help="remove one learned rule"
+    )
+    automation_forget.add_argument("name", help="the registered automation")
+    automation_forget.add_argument("rule", help="the rule id, from `automation rules`")
+
+    automation_sub.add_parser(
+        "segments", help="list the designed segments that can be appended"
+    )
+
     automation_state = automation_sub.add_parser(
         "state", help="show which screen FACT is showing"
     )
@@ -773,6 +1328,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("wizard", help="build and prove a workflow interactively")
     subparsers.add_parser("check", help="print the environment report")
+    subparsers.add_parser(
+        "doctor", help="check this machine can run an automation, in one screen"
+    )
 
     return parser
 
@@ -797,6 +1355,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "wizard":
         return run_agent(config_path, env_path, args.values)
+    if args.command == "doctor":
+        return run_doctor(env_path)
     if args.command == "inspect":
         return run_inspect(
             config_path,
@@ -834,6 +1394,38 @@ def main(argv: list[str] | None = None) -> int:
                 overlay=not args.no_overlay,
                 env_path=env_path,
             )
+        if sub == "register":
+            return run_register(
+                args.name,
+                config_path,
+                args.sub_values,
+                dry_run=args.dry_run,
+                overlay=not args.no_overlay,
+                env_path=env_path,
+            )
+        if sub == "append":
+            return run_append_automation(
+                args.name, args.segment, dry_run=args.dry_run
+            )
+        if sub == "script":
+            return run_write_launcher(args.name)
+        if sub == "rules":
+            return run_rules(args.name)
+        if sub == "learn":
+            return run_learn_rule(
+                args.name,
+                clicks=args.click,
+                doubles=args.double_click,
+                keys=args.keys,
+                expect=args.expect,
+                description=args.description,
+                rule_id=args.rule_id,
+                env_path=env_path,
+            )
+        if sub == "forget":
+            return run_forget_rule(args.name, args.rule)
+        if sub == "segments":
+            return run_list_segments()
         if sub == "state":
             return run_state(env_path)
         if sub == "list":

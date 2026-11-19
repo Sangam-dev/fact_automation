@@ -1,32 +1,47 @@
 {
   "app": {
-    "title_contains": "Invoice Manager",
-    "process_name": null,
+    "title_contains": "",
+    "process_name": "FACTERPNG.exe",
     "require_foreground": true,
     "pin_window": true
   },
-  "fields": [
-    { "name": "invoice_number", "field": "Invoice Number", "type": "text" },
-    { "name": "customer_name", "field": "Customer Name", "type": "text" },
-    { "name": "amount", "field": "Amount", "type": "number" }
-  ],
+  "fields": [],
   "actions": {
-    "save_button": "Save Record",
-    "new_record_button": "Add New",
-    "wait_after_save_seconds": 1.5
+    "save_button": "Save && &Close",
+    "new_record_button": null,
+    "wait_after_save_seconds": 1.0
   },
   "workflow": {
     "steps": [
-      { "action": "click", "button": "Add New" },
-      { "action": "fill", "key": "invoice_number" },
-      { "action": "fill", "key": "customer_name" },
-      { "action": "fill", "key": "amount" }
+      {
+        "action": "click",
+        "button": "btnLogin"
+      },
+      {
+        "action": "click",
+        "button": "Open"
+      },
+      {
+        "action": "double_click",
+        "button": "Sale Order Entry"
+      },
+      {
+        "action": "click",
+        "button": "&Add"
+      },
+      {
+        "action": "run",
+        "script": "execution/scripts/form_filler_1.py",
+        "args": [
+          "{values_file}"
+        ],
+        "timeout_seconds": 900.0
+      }
     ],
-    "retry_on_failure": false,
     "pause_after_click_seconds": 0.5
   },
   "gemini": {
-    "model": "gemini-3.6-flash",
+    "model": "gemini-3.5-flash-lite",
     "max_image_dimension": 1600,
     "timeout_seconds": 60,
     "max_retries": 3,
@@ -38,15 +53,7 @@
     "success_region": null,
     "error_region": null,
     "success_pattern": "",
-    "error_patterns": ["(?i)required", "(?i)invalid", "(?i)error"],
-    "verifier": "row",
-    "footprint": ["invoice_number"]
-  },
-  "scrolling": {
-    "enabled": true,
-    "max_screens": 6,
-    "settle_seconds": 0.4,
-    "wheel_notches": 5
+    "error_patterns": []
   },
   "safety": {
     "stop_hotkey": "alt+t",
