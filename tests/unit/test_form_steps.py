@@ -493,3 +493,186 @@ def test_a_local_check_without_the_value_is_a_recheck(monkeypatch) -> None:
 
     assert result.outcome == UNKNOWN
     assert "none of the saved values appeared" in result.reason
+
+# ---------------------------------------------------------------------------
+# Resuming a run: start_index and the per-step hook
+# ---------------------------------------------------------------------------
+
+
+def _two_field_plan() -> tuple[list, dict, dict, dict]:
+    steps = [
+        FillStep(action="fill", key="Amount", optional=True),
+        FillStep(action="fill", key="Invoice Number"),
+    ]
+    return (
+        steps,
+        {"Amount": "500", "Invoice Number": "INV-1"},
+        {"Amount": "Amount", "Invoice Number": "Invoice Number"},
+        {"Amount": "number", "Invoice Number": "text"},
+    )
+
+
+def test_start_index_skips_the_steps_already_done(monkeypatch) -> None:
+    calls = _stub_input(monkeypatch)
+    steps, values, labels, types = _two_field_plan()
+    inspection = FakeInspection(
+        [_field("Amount", "e1"), _field("Invoice Number", "e2")],
+        values={"e1": "500", "e2": "INV-1"},
+    )
+
+    plan = execute_form_steps(
+        steps,
+        values,
+        window=_window(),
+        inspection=inspection,
+        labels=labels,
+        types=types,
+        start_index=1,
+    )
+
+    assert plan.ok, plan.problems
+    assert plan.steps_run == 1
+    assert calls["pastes"] == ["INV-1"], "the skipped step must not be typed again"
+
+
+def test_step_numbers_in_messages_stay_absolute_when_resuming(monkeypatch) -> None:
+    _stub_input(monkeypatch)
+    steps, values, labels, types = _two_field_plan()
+
+    plan = execute_form_steps(
+        steps,
+        values,
+        window=_window(),
+        inspection=FakeInspection([_field("Amount", "e1")]),
+        labels=labels,
+        types=types,
+        start_index=1,
+    )
+
+    assert not plan.ok
+    assert plan.problems[0].startswith("step 2 "), plan.problems
+
+
+def test_every_finished_step_is_reported_to_the_caller(monkeypatch) -> None:
+    _stub_input(monkeypatch)
+    steps = [
+        ClickStep(action="click", button="Add"),
+        FillStep(action="fill", key="Amount"),
+    ]
+    after = FakeInspection([_field("Amount", "e1")], values={"e1": "500"})
+    monkeypatch.setattr(form_steps, "inspect_window", lambda _w, **_k: after)
+    seen: list[tuple[int, str]] = []
+
+    plan = execute_form_steps(
+        steps,
+        {"Amount": "500"},
+        window=_window(),
+        inspection=FakeInspection([_button("Add")]),
+        labels={"Amount": "Amount"},
+        types={"Amount": "number"},
+        on_step=lambda position, step: seen.append((position, step.action)),
+    )
+
+    assert plan.ok, plan.problems
+    assert seen == [(1, "click"), (2, "fill")]
+
+
+def test_a_skipped_optional_step_is_not_reported(monkeypatch) -> None:
+    _stub_input(monkeypatch)
+    seen: list[int] = []
+
+    plan = execute_form_steps(
+        [FillStep(action="fill", key="Amount", optional=True)],
+        {"Amount": "500"},
+        window=_window(),
+        inspection=FakeInspection([]),
+        labels={"Amount": "Amount"},
+        types={"Amount": "number"},
+        on_step=lambda position, _step: seen.append(position),
+    )
+
+    assert plan.steps_run == 0
+    assert "skipped" in plan.warnings[0]
+    assert seen == []
+
+
+def test_an_unreadable_field_is_still_reported_as_done(monkeypatch) -> None:
+    _stub_input(monkeypatch)
+    seen: list[int] = []
+    inspection = FakeInspection([_field("Amount", "e1")], values={})
+
+    plan = execute_form_steps(
+        [FillStep(action="fill", key="Amount")],
+        {"Amount": "500"},
+        window=_window(),
+        inspection=inspection,
+        labels={"Amount": "Amount"},
+        types={"Amount": "number"},
+        on_step=lambda position, _step: seen.append(position),
+    )
+
+    assert plan.ok, plan.problems
+    assert seen == [1], "the paste landed even though the value could not be read"
+
+
+def test_a_failed_step_does_not_report_itself(monkeypatch) -> None:
+    _stub_input(monkeypatch)
+    seen: list[int] = []
+    inspection = FakeInspection([_field("Amount", "e1")], values={"e1": "nonsense"})
+
+    plan = execute_form_steps(
+        [FillStep(action="fill", key="Amount")],
+        {"Amount": "500"},
+        window=_window(),
+        inspection=inspection,
+        labels={"Amount": "Amount"},
+        types={"Amount": "number"},
+        on_step=lambda position, _step: seen.append(position),
+    )
+
+    assert not plan.ok
+    assert seen == []
+
+
+def test_a_precondition_that_raises_runs_nothing(monkeypatch) -> None:
+    calls = _stub_input(monkeypatch)
+
+    def before_step(position, step):
+        raise RuntimeError("the form is not open")
+
+    with pytest.raises(RuntimeError, match="not open"):
+        execute_form_steps(
+            [FillStep(action="fill", key="Amount")],
+            {"Amount": "500"},
+            window=_window(),
+            inspection=FakeInspection([_field("Amount")]),
+            labels={"Amount": "Amount"},
+            types={"Amount": "number"},
+            before_step=before_step,
+        )
+
+    assert calls["clicks"] == [] and calls["pastes"] == []
+
+
+def test_the_precondition_is_checked_before_the_action(monkeypatch) -> None:
+    _stub_input(monkeypatch)
+    monkeypatch.setattr(
+        form_steps,
+        "inspect_window",
+        lambda _w, **_k: FakeInspection([_button("Add")]),
+    )
+    order: list[str] = []
+
+    plan = execute_form_steps(
+        [ClickStep(action="click", button="Add")],
+        {},
+        window=_window(),
+        inspection=FakeInspection([_button("Add")]),
+        labels={},
+        types={},
+        before_step=lambda position, step: order.append("check"),
+        on_step=lambda position, step: order.append("done"),
+    )
+
+    assert plan.ok, plan.problems
+    assert order == ["check", "done"]

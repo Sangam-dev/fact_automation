@@ -8,6 +8,7 @@ is no workbook, queue, or ERP transaction here yet:
 * ``ground``   - AI field/button detection on the live window
 * ``safety``   - exercise the stop/pause/resume hotkeys
 * ``form run`` - execute a saved workflow once with a record from JSON
+* ``automation`` - run a saved automation, resuming where it stopped
 * ``wizard``   - build and prove a workflow interactively
 """
 
@@ -507,6 +508,142 @@ def run_form(
         lock.release()
 
 
+def run_automation_command(
+    name: str,
+    values_path: str,
+    *,
+    saved_already: bool = False,
+    not_saved: bool = False,
+    restart: bool = False,
+    overlay: bool = True,
+    env_path: str | None = None,
+) -> int:
+    """Run one saved automation, starting from the screen FACT is showing."""
+    from ai.providers.gemini import GeminiClient, GeminiError
+    from core.safety.controller import SafetyController
+    from core.safety.hotkeys import HotkeyError, hotkeys_from_config
+    from core.safety.overlay import NullOverlay, StatusOverlay
+    from desktop.screenshots.capture import CaptureError
+    from desktop.uia.uia import UIAError
+    from desktop.windows.window import WindowError
+    from execution.verification.confirmation import GeminiTextReader, TextConfirmation
+    from execution.workflows.automation_runner import run_automation
+    from execution.workflows.runner import load_values
+
+    from core.automation.model import AutomationError
+    from core.automation.registry import load as load_automation
+
+    load_env(env_path)
+
+    # The name is checked first: a typo there is the likelier mistake, and the
+    # message names the automations that do exist.
+    try:
+        plan = load_automation(name)
+        config = plan.to_config()
+    except AutomationError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+
+    try:
+        values = load_values(values_path)
+    except Exception as exc:  # noqa: BLE001 - any read problem is the same answer
+        print(f"ERROR: {exc}")
+        return 2
+
+    lock = RunLock()
+    try:
+        lock.acquire(note=f"automation:{name}")
+    except RunLockError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+
+    controller = None
+    try:
+        confirmation = None
+        # The plan decides its own save check; the reader is only built when the
+        # automation asks for the text verifier.
+        if plan.save.verifier == "text":
+            client = GeminiClient(config.gemini)
+            confirmation = TextConfirmation(config.confirmation, GeminiTextReader(client))
+
+        hotkeys = hotkeys_from_config(config.safety)
+        labels = {hotkey.action: hotkey.label for hotkey in hotkeys}
+        controller = SafetyController(
+            config.safety,
+            overlay=StatusOverlay(labels) if overlay else NullOverlay(),
+            on_state=_state_printer(labels),
+        )
+        controller.start()
+
+        run = run_automation(
+            name,
+            values,
+            saved_already=saved_already,
+            not_saved=not_saved,
+            restart=restart,
+            confirmation=confirmation,
+            controller=controller,
+        )
+        print()
+        print(f"Outcome: {run.status} ({name})")
+        if run.message:
+            print(f"  {run.message}")
+        for shot in run.screenshots:
+            print(f"  evidence: {shot}")
+        return run.exit_code
+    except (AutomationError, WindowError, CaptureError, UIAError, GeminiError, HotkeyError) as exc:
+        print(f"ERROR: {exc}")
+        return 1
+    finally:
+        if controller is not None:
+            controller.close()
+        lock.release()
+
+
+def run_state(env_path: str | None = None) -> int:
+    """Print which screen FACT is showing, and the evidence for it."""
+    from desktop.state.recognizer import detect
+    from desktop.state.states import StateTableError, load_state_table
+
+    load_env(env_path)
+    try:
+        table = load_state_table()
+    except StateTableError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+    match = detect(table)
+    print(match.message())
+    if match.stack:
+        print("  behind: " + " < ".join(match.stack))
+    for item in table.states:
+        print(f"  {'*' if item.id == match.state_id else ' '} {item.id}: {item.label}")
+    return 0 if match.known else 2
+
+
+def run_list_automations() -> int:
+    """List saved automations with where their last run stopped."""
+    from core.automation.progress import ProgressError, load_progress
+    from core.automation.registry import list_automations
+
+    names = list_automations()
+    if not names:
+        print("No automations yet: config/automations/ is empty.")
+        return 2
+    for name in names:
+        try:
+            item = load_progress(name)
+        except ProgressError as exc:
+            print(f"  {name}: progress unreadable ({exc})")
+            continue
+        if item is None:
+            print(f"  {name}: never run")
+            continue
+        where = f"step {item.cursor + 1}" if item.completed else "not started"
+        state = "save unresolved" if item.save_unresolved else (item.outcome or "in progress")
+        print(f"  {name}: {state}, {where}")
+    return 0
+
+
 def run_agent(config_path: str | None, env_path: str | None, values_path: str | None) -> int:
     """Launch the interactive workflow wizard."""
     from wizard.wizard import run_wizard
@@ -601,6 +738,39 @@ def build_parser() -> argparse.ArgumentParser:
     form_run.add_argument("--confirm-each", action="store_true")
     form_run.add_argument("--no-overlay", action="store_true")
 
+    automation_parser = subparsers.add_parser(
+        "automation", help="run a saved automation, or inspect one"
+    )
+    automation_sub = automation_parser.add_subparsers(dest="automation_command")
+    automation_run = automation_sub.add_parser(
+        "run", help="run an automation, resuming from the screen FACT shows"
+    )
+    automation_run.add_argument("name", help="the automation's registered name")
+    automation_run.add_argument("--values", dest="sub_values", required=True)
+    automation_run.add_argument("--env-file", dest="sub_env", default=None)
+    automation_run.add_argument(
+        "--saved-already",
+        action="store_true",
+        help="the unfinished Save did go through; record it and stop",
+    )
+    automation_run.add_argument(
+        "--not-saved",
+        action="store_true",
+        help="the unfinished Save did not go through; continue the run",
+    )
+    automation_run.add_argument(
+        "--restart",
+        action="store_true",
+        help="forget the last run and enter the record from the beginning",
+    )
+    automation_run.add_argument("--no-overlay", action="store_true")
+
+    automation_state = automation_sub.add_parser(
+        "state", help="show which screen FACT is showing"
+    )
+    automation_state.add_argument("--env-file", dest="sub_env", default=None)
+    automation_sub.add_parser("list", help="list saved automations and their last run")
+
     subparsers.add_parser("wizard", help="build and prove a workflow interactively")
     subparsers.add_parser("check", help="print the environment report")
 
@@ -652,6 +822,24 @@ def main(argv: list[str] | None = None) -> int:
             overlay=not args.no_overlay,
             env_path=env_path,
         )
+    if args.command == "automation":
+        sub = getattr(args, "automation_command", None)
+        if sub == "run":
+            return run_automation_command(
+                args.name,
+                args.sub_values,
+                saved_already=args.saved_already,
+                not_saved=args.not_saved,
+                restart=args.restart,
+                overlay=not args.no_overlay,
+                env_path=env_path,
+            )
+        if sub == "state":
+            return run_state(env_path)
+        if sub == "list":
+            return run_list_automations()
+        parser.parse_args(["automation", "--help"])
+        return 2
 
     parser.print_help()
     return 2

@@ -124,6 +124,9 @@ def execute_form_steps(
     pause_after_click: float = 0.5,
     require_foreground: bool = False,
     read_back_retry_seconds: float = READ_BACK_RETRY_SECONDS,
+    start_index: int = 0,
+    before_step: Callable[[int, FormStep], None] | None = None,
+    on_step: Callable[[int, FormStep], None] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     output: Callable[[str], None] = print,
 ) -> PlanResult:
@@ -132,6 +135,12 @@ def execute_form_steps(
     A click may create the controls the next steps need, so the tree is
     re-inspected after each one; a fill never changes the tree, so its
     read-back uses the inspection that resolved it.
+
+    ``start_index`` skips steps already known to be done (a resumed run): step
+    numbers in messages stay absolute, so step 3 of the plan is still "step 3".
+    ``before_step`` is called before a step does anything - a precondition, so
+    an exception from it runs nothing - and ``on_step`` after it genuinely
+    finished, which is where a caller records its checkpoint.
     """
     fields: dict[str, ResolvedTarget] = {}
     problems: list[str] = []
@@ -140,6 +149,10 @@ def execute_form_steps(
     guard = PauseGuard(controller, window, output)
 
     for index, step in enumerate(steps, start=1):
+        if index <= start_index:
+            continue
+        if before_step is not None:
+            before_step(index, step)
         if guard.check("stopped while filling the form"):
             # The user took over while the run was paused, so the screen may
             # have changed underneath it: read the live UI again before aiming.
@@ -210,6 +223,8 @@ def execute_form_steps(
                     f"clicking {label!r}: {exc}"
                 )
                 break
+            if on_step is not None:
+                on_step(index, step)
             continue
 
         if delay > 0:
@@ -242,39 +257,46 @@ def execute_form_steps(
         fields[step.key] = target
         output(f"  step {index}: fill {label!r} = {value!r}")
 
-        if target.candidate_id is None:
-            continue
-        try:
-            observed = inspection.read_value(target.candidate_id)
-        except UIAError as exc:
-            warnings.append(
-                f"step {index}: could not read {label!r} back ({exc}); "
-                "relying on the save check"
-            )
-            continue
         expected = value
         field_type = types.get(step.key, "text")
-        if not values_match(observed, expected, field_type) and (
-            read_back_retry_seconds > 0
-        ):
-            # The target applies a paste a moment after the keystroke, so the
-            # first read can arrive before the text does. Look once more before
-            # failing a record that was actually filled correctly.
-            sleep(read_back_retry_seconds)
+        # ``None`` means "cannot tell", not "wrong": the value is unreadable
+        # either because the control has no id or because reading it failed, and
+        # neither is evidence that the paste did not land.
+        observed: str | None = None
+        if target.candidate_id is not None:
             try:
                 observed = inspection.read_value(target.candidate_id)
             except UIAError as exc:
                 warnings.append(
-                    f"step {index}: could not read {label!r} back again "
-                    f"({exc}); relying on the save check"
+                    f"step {index}: could not read {label!r} back ({exc}); "
+                    "relying on the save check"
                 )
-                continue
-        if not values_match(observed, expected, field_type):
-            problems.append(
-                f"step {index} ({label!r}): read back {observed!r}, "
-                f"expected {expected!r}"
-            )
-            break
+            if (
+                observed is not None
+                and not values_match(observed, expected, field_type)
+                and read_back_retry_seconds > 0
+            ):
+                # The target applies a paste a moment after the keystroke, so
+                # the first read can arrive before the text does. Look once more
+                # before failing a record that was actually filled correctly.
+                sleep(read_back_retry_seconds)
+                try:
+                    observed = inspection.read_value(target.candidate_id)
+                except UIAError as exc:
+                    warnings.append(
+                        f"step {index}: could not read {label!r} back again "
+                        f"({exc}); relying on the save check"
+                    )
+                    observed = None
+            if observed is not None and not values_match(observed, expected, field_type):
+                problems.append(
+                    f"step {index} ({label!r}): read back {observed!r}, "
+                    f"expected {expected!r}"
+                )
+                break
+
+        if on_step is not None:
+            on_step(index, step)
 
     return PlanResult(
         inspection=inspection,
