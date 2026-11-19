@@ -124,9 +124,22 @@ class ProgressState(BaseModel):
         self.updated_at = (when or datetime.now()).isoformat(timespec="seconds")
 
 
-def digest_values(values: Mapping[str, Any]) -> str:
-    """A stable fingerprint of the record data, order-independent."""
-    payload = "\n".join(f"{key}={values[key]}" for key in sorted(values))
+def digest_values(
+    values: Mapping[str, Any],
+    rows: Iterable[Mapping[str, Any]] = (),
+) -> str:
+    """A stable fingerprint of the record data, order-independent.
+
+    The line rows are part of the record: a run resumed with the same header
+    but different lines is a different document, and must not be treated as a
+    continuation.
+    """
+    lines = [f"{key}={values[key]}" for key in sorted(values)]
+    for index, row in enumerate(rows, start=1):
+        lines.extend(
+            f"rows[{index}].{key}={row[key]}" for key in sorted(row)
+        )
+    payload = "\n".join(lines)
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -134,6 +147,7 @@ def new_progress(
     automation: str,
     values: Mapping[str, Any],
     *,
+    rows: Iterable[Mapping[str, Any]] = (),
     run_id: str | None = None,
     when: datetime | None = None,
 ) -> ProgressState:
@@ -142,7 +156,7 @@ def new_progress(
     return ProgressState(
         run_id=run_id or stamp.strftime("%Y%m%d_%H%M%S"),
         automation=automation,
-        values_digest=digest_values(values),
+        values_digest=digest_values(values, rows),
         updated_at=stamp.isoformat(timespec="seconds"),
     )
 

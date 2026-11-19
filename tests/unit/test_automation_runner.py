@@ -222,7 +222,7 @@ def go(
         progress_root=progress,
         table=table(*states),
         detector=screen,
-        attach=lambda config: object(),
+        attach=lambda config, **kwargs: object(),
         inspect=lambda window: object(),
         clear_form=clear,
         execute=executor,
@@ -504,6 +504,77 @@ def test_a_navigation_click_is_not_judged_by_the_screen_it_leaves_behind(
     run, executor, _saver, _clear = go(registered)
     assert run.status == SAVED
     assert executor.positions == [1, 2, 3]
+
+
+# -------------------------------------------------------------------- the wait --
+class SlowScreen(Screen):
+    """Answers the old screen for a while, then the new one: a slow login."""
+
+    def __init__(self, after: int, final: str = "05_add") -> None:
+        super().__init__("04_view")
+        self.after = after
+        self.final = final
+
+    def __call__(self) -> StateMatch:
+        self.calls += 1
+        return StateMatch(state_id=self.state if self.calls <= self.after else self.final)
+
+
+def slow_runner(registered, screen: SlowScreen, slept: list[float], **options: Any):
+    """Run only as far as step 2's checkpoint, with the real waiting logic."""
+    automations, progress = registered
+
+    def execute(steps: list, values: dict, **call_options: Any) -> PlanResult:
+        before_step = call_options["before_step"]
+        before_step(1, steps[0])
+        before_step(2, steps[1])
+        return PlanResult(inspection=object(), fields={}, steps_run=2)
+
+    return run_automation(
+        NAME,
+        dict(VALUES),
+        automations_root=automations,
+        progress_root=progress,
+        table=table("04_view", "05_add"),
+        detector=screen,
+        attach=lambda config, **kwargs: object(),
+        inspect=lambda window: object(),
+        execute=execute,
+        save_call=Saver(),
+        clear_form=lambda *a, **k: True,
+        output=lambda line: None,
+        sleep=slept.append,
+        **options,
+    )
+
+
+def test_a_plan_carries_its_own_screen_wait(registered) -> None:
+    automations, _progress = registered
+    assert registry.load(NAME, automations).wait_seconds == 15.0
+
+    registry.save(Automation.model_validate(payload(wait_seconds=45)), automations)
+    assert registry.load(NAME, automations).wait_seconds == 45.0
+
+
+def test_a_screen_slower_than_three_seconds_is_still_waited_for(registered) -> None:
+    # Twenty polls at the 0.3s interval is 6.3s: twice the old fixed wait, well
+    # inside the plan's own default. This is the Login-window case.
+    run = slow_runner(registered, SlowScreen(after=20), [])
+
+    assert run.status == SAVED, run.message
+
+
+def test_the_plan_wait_is_the_budget_a_checkpoint_gets(registered) -> None:
+    automations, _progress = registered
+    registry.save(Automation.model_validate(payload(wait_seconds=2)), automations)
+    slept: list[float] = []
+
+    run = slow_runner(registered, SlowScreen(after=50), slept)
+
+    assert run.status == FAILED
+    assert "04_view" in run.message
+    # 2 seconds at a 0.3s interval: it genuinely waited its budget, not forever.
+    assert 5 <= len(slept) <= 8, len(slept)
 
 
 def test_the_checkpoint_waits_for_a_slow_screen() -> None:

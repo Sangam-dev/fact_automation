@@ -15,6 +15,10 @@ both call. It owns the order that makes a resume safe, and nothing else:
 5. write the Save marker *before* clicking Save, and clear it only once the
    save is proved - so a crash leaves evidence instead of ambiguity.
 
+One document, one Save. A values file may carry ``rows``: the header is typed
+once, the steps marked ``per_row`` are typed once per row, and Save is clicked
+once after the last row. Rows are never saved individually.
+
 No model is called anywhere in this file.
 """
 
@@ -24,8 +28,14 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping, Sequence
 
+from core.automation.exceptions import (
+    Observation,
+    RuleError,
+    RuleTable,
+    load_rules,
+)
 from core.automation.model import Automation, AutomationError
 from core.automation.progress import (
     OUTCOME_ABORTED,
@@ -47,16 +57,25 @@ from core.automation.resume import ResumePlan, plan_resume
 from core.config import AgentConfig
 from core.runtime.errors import RunnerAborted
 from core.safety.controller import SafetyController
-from desktop.state.recognizer import StateMatch, detect
+from desktop.state.fact import FactError, attach as attach_fact, detect_state
+from desktop.state.recognizer import StateMatch
 from desktop.state.states import StateTable, StateTableError, load_state_table
 from desktop.types import WindowInfo
 from desktop.uia.uia import UIAError, UIAInspection, inspect_window
-from desktop.windows.window import WindowError, attach_window
+from desktop.windows.window import WindowError
+from desktop.input.input import (
+    InputError,
+    click_checked,
+    double_click_checked,
+    press_keys,
+)
 from execution.actions.engine import (
+    BUTTON_CONTROL_TYPES,
     PlanResult,
     clear_open_form,
     execute_form_steps,
 )
+from execution.verification.controls import resolve_page_target
 from execution.actions.models import FormStep
 from execution.verification.confirmation import SaveConfirmer
 from execution.workflows.runner import (
@@ -157,6 +176,8 @@ def run_automation(
     name: str,
     values: dict[str, str],
     *,
+    rows: Sequence[Mapping[str, str]] = (),
+    values_file: str | Path | None = None,
     automations_root: str | Path | None = None,
     progress_root: str | Path | None = None,
     table: StateTable | None = None,
@@ -168,11 +189,11 @@ def run_automation(
     controller: SafetyController | None = None,
     screenshot_dir: str | Path | None = None,
     record_label: str = "record",
-    checkpoint_seconds: float = 3.0,
+    checkpoint_seconds: float | None = None,
     checkpoint_interval: float = 0.3,
     output: Callable[[str], None] = print,
     sleep: Callable[[float], None] = time.sleep,
-    attach: Callable[[AgentConfig], WindowInfo] = attach_window,
+    attach: Callable[..., WindowInfo] = attach_fact,
     inspect: Callable[[WindowInfo], UIAInspection] = inspect_window,
     clear_form: Callable[..., bool] = clear_open_form,
     execute: Callable[..., PlanResult] = execute_form_steps,
@@ -199,9 +220,42 @@ def run_automation(
             "the values are missing field(s): "
             + ", ".join(repr(key) for key in missing),
         )
+    rows = [dict(row) for row in rows]
+    if not plan.repeats_per_row() and rows:
+        return _blocked(
+            name,
+            f"the values describe {len(rows)} row(s), but this automation has no "
+            "steps that repeat per row; remove the rows or add the row steps",
+        )
+    wanted_row_keys = plan.row_keys()
+    for number, row in enumerate(rows, start=1):
+        absent = [key for key in wanted_row_keys if key not in row]
+        if absent:
+            return _blocked(
+                name,
+                f"row {number} of the values is missing field(s): "
+                + ", ".join(repr(key) for key in absent),
+            )
+    if plan.repeats_per_row() and not rows:
+        return _blocked(
+            name,
+            "this automation repeats steps per row, but the values contain no "
+            '"rows": add the line items, or use a plan without row steps',
+        )
+
+    # Rules only ever *help* a run get past a screen: a missing or broken rule
+    # file stops the automation from being trusted, and is reported, not ignored.
+    try:
+        rules: RuleTable | None = load_rules(name, automations_root)
+    except RuleError as exc:
+        return _blocked(name, str(exc))
 
     config = plan.to_config()
-    detect_now = detector or (lambda: detect(table))
+    # One number governs every screen wait. The plan carries it so a slow PC can
+    # be told to wait longer without editing code; a caller that passes a value
+    # explicitly (tests, a future --wait flag) still wins.
+    wait_seconds = plan.wait_seconds if checkpoint_seconds is None else checkpoint_seconds
+    detect_now = detector or (lambda: detect_state(table))
 
     try:
         item = load_progress(name, progress_root)
@@ -263,9 +317,9 @@ def run_automation(
             progress=item,
         )
 
-    digest = digest_values(values)
+    digest = digest_values(values, rows)
     if item is None:
-        item = new_progress(name, values, when=_now())
+        item = new_progress(name, values, rows=rows, when=_now())
 
     screen = detect_now()
     if not screen.known:
@@ -289,10 +343,23 @@ def run_automation(
         return _blocked(name, resume.blocked_reason, progress=item, resume=resume)
     output(f"  {resume.describe(plan.steps)}")
 
+    # Rows are typed into one open form, so a run that stopped after the header
+    # cannot be continued without typing the rows again over the ones already
+    # there. A person decides; this code does not guess.
+    if plan.repeats_per_row() and resume.index > 0:
+        return _blocked(
+            name,
+            "this run stopped after the header was entered, and the row steps "
+            "cannot be repeated safely on a half-filled form; re-run with "
+            "--restart to enter the document again, or finish it by hand",
+            progress=item,
+            resume=resume,
+        )
+
     try:
-        window = attach(config.app)
+        window = attach(config.app, seconds=wait_seconds)
         inspection = inspect(window)
-    except (WindowError, UIAError) as exc:
+    except (FactError, WindowError, UIAError) as exc:
         return AutomationRun(
             status=FAILED,
             automation=name,
@@ -301,6 +368,114 @@ def run_automation(
             resume=resume,
             progress=item,
         )
+
+    # FACT swaps windows between screens (Login -> Main, View -> Add). The
+    # executor is handed a refresh hook so a click that replaces the window is
+    # followed by the *new* window, not an immediate failure on the old handle.
+    screen_state: dict[str, WindowInfo | UIAInspection] = {
+        "window": window,
+        "inspection": inspection,
+    }
+
+    def refresh() -> tuple[WindowInfo, UIAInspection]:
+        try:
+            fresh_window = attach(config.app, seconds=wait_seconds)
+            fresh_inspection = inspect(fresh_window)
+        except (FactError, WindowError, UIAError) as exc:
+            raise UIAError(str(exc)) from exc
+        screen_state["window"] = fresh_window
+        screen_state["inspection"] = fresh_inspection
+        return fresh_window, fresh_inspection
+
+    def _apply_rule(spot: str, expected: str, match: StateMatch) -> bool:
+        """Try the learned rules for the screen that is in the way.
+
+        A rule runs only when every signal in its trigger matches, and the run
+        continues only when the screen afterwards is the one the rule promised.
+        Anything less and the caller fails the way it did before, so a wrong
+        rule costs a message, never a wrong click on a form.
+        """
+        if rules is None or not rules.rules:
+            return False
+        window = screen_state["window"]
+        inspection = screen_state["inspection"]
+        seen = Observation(
+            state=match.state_id,
+            title=window.title,
+            class_name=window.class_name,
+            auto_ids=tuple(
+                item.automation_id
+                for item in inspection.candidates
+                if item.automation_id
+            ),
+        )
+        rule = rules.find(seen)
+        if rule is None:
+            output(f"  {spot}: no learned rule matches this screen")
+            return False
+        output(
+            f"  {spot}: applying rule {rule.id!r}"
+            + (f" ({rule.description})" if rule.description else "")
+        )
+        for action in rule.actions:
+            try:
+                if action.action == "key":
+                    press_keys(action.keys)
+                else:
+                    target, _warning = resolve_page_target(
+                        inspection,
+                        label=action.button,
+                        control_types=BUTTON_CONTROL_TYPES,
+                    )
+                    if target is None:
+                        output(
+                            f"  rule {rule.id!r}: {action.button!r} is not on "
+                            "the screen any more; stopping"
+                        )
+                        return False
+                    x, y = target.rect.center
+                    if action.action == "double_click":
+                        double_click_checked(
+                            x,
+                            y,
+                            window,
+                            require_foreground=config.app.require_foreground,
+                        )
+                    else:
+                        click_checked(
+                            x,
+                            y,
+                            window,
+                            require_foreground=config.app.require_foreground,
+                        )
+            except (InputError, UIAError) as exc:
+                output(f"  rule {rule.id!r} could not run: {exc}")
+                return False
+            if config.workflow.pause_after_click_seconds > 0:
+                sleep(config.workflow.pause_after_click_seconds)
+            try:
+                screen_state["window"], screen_state["inspection"] = refresh()
+            except UIAError as exc:
+                output(f"  rule {rule.id!r}: the screen could not be read: {exc}")
+                return False
+            window = screen_state["window"]
+            inspection = screen_state["inspection"]
+        wanted = rule.expect or expected
+        recovered = _wait_for_state(
+            detect_now,
+            wanted,
+            seconds=wait_seconds,
+            interval=checkpoint_interval,
+            sleep=sleep,
+        )
+        if recovered.state_id != wanted:
+            output(
+                f"  rule {rule.id!r} ran, but the screen is "
+                f"{recovered.state_id}, not {wanted}; stopping"
+            )
+            return False
+        output(f"  rule {rule.id!r}: recovered, the plan continues")
+        return True
 
     # Starting from the top means "as if nothing had happened yet", so a form
     # left open by an earlier attempt has to go: typing into it would land this
@@ -325,55 +500,122 @@ def run_automation(
             )
 
     steps = plan.steps
+    once_steps, row_steps = plan.split_steps()
+    config_steps = list(config.workflow.steps)
+    once_config = config_steps[: len(once_steps)]
+    row_config = config_steps[len(once_steps) :]
 
-    def checkpoint_before(position: int, _step: FormStep) -> None:
-        """Hold the step until the screen it belongs on is actually showing.
+    def _checkpoint(offset: int, where: str = "") -> Callable[[int, FormStep], None]:
+        """Hold a step until the screen it belongs on is actually showing.
 
         A checkpoint is a precondition, not a promise: clicking "Add" is
         *followed* by a different screen, so checking afterwards would fail
         every navigation step in the plan. Nothing has run when this raises.
         """
-        record = steps[position - 1]
-        expected = record.checkpoint.state
-        match = _wait_for_state(
-            detect_now,
-            expected,
-            seconds=checkpoint_seconds,
-            interval=checkpoint_interval,
-            sleep=sleep,
-        )
-        if match.state_id != expected:
-            raise CheckpointError(
-                f"step {position} ({record.id}) belongs on {expected!r}, but the "
-                f"screen is {match.state_id}: {match.message()}. Nothing was "
-                "done for this step, so a re-run resumes from here."
+
+        def checkpoint_before(position: int, _step: FormStep) -> None:
+            record = steps[offset + position - 1]
+            expected = record.checkpoint.state
+            spot = f"{where}, step {position}" if where else f"step {offset + position}"
+            match = _wait_for_state(
+                detect_now,
+                expected,
+                seconds=wait_seconds,
+                interval=checkpoint_interval,
+                sleep=sleep,
             )
-        output(f"  checkpoint {expected}: ok (step {position} of {len(steps)})")
+            if match.state_id != expected:
+                if _apply_rule(spot, expected, match):
+                    return
+                raise CheckpointError(
+                    f"{spot} ({record.id}) belongs on {expected!r}, but the "
+                    f"screen is {match.state_id}: {match.message()}. Nothing was "
+                    "done for this step, so a re-run resumes from here. "
+                    "If you clear this by hand, teach it: python cli.py "
+                    f"automation learn {name} --click \"OK\" --expect {expected}"
+                )
+            output(f"  checkpoint {expected}: ok ({spot})")
 
-    def record_step(position: int, _step: FormStep) -> None:
+        return checkpoint_before
+
+    def _record(offset: int) -> Callable[[int, FormStep], None]:
         """A step finished: the cursor moves past it, on disk."""
-        record = steps[position - 1]
-        item.mark_step(position - 1, record.id, _now())
-        save_progress(item, progress_root)
 
-    try:
-        plan_result = execute(
-            config.workflow.steps,
-            values,
-            window=window,
-            inspection=inspection,
-            labels={item.name: item.field for item in config.fields},
-            types={item.name: item.type for item in config.fields},
+        def record_step(position: int, _step: FormStep) -> None:
+            record = steps[offset + position - 1]
+            item.mark_step(offset + position - 1, record.id, _now())
+            save_progress(item, progress_root)
+
+        return record_step
+
+    labels = {field_spec.name: field_spec.field for field_spec in config.fields}
+    types = {field_spec.name: field_spec.type for field_spec in config.fields}
+
+    def _stage(
+        stage_steps: list,
+        stage_values: dict[str, str],
+        *,
+        start_index: int,
+        offset: int,
+        where: str = "",
+    ) -> PlanResult:
+        return execute(
+            stage_steps,
+            stage_values,
+            window=screen_state["window"],
+            inspection=screen_state["inspection"],
+            labels=labels,
+            types=types,
             controller=controller,
             delay=config.safety.action_delay_seconds,
             pause_after_click=config.workflow.pause_after_click_seconds,
             require_foreground=config.app.require_foreground,
-            start_index=resume.index,
-            before_step=checkpoint_before,
-            on_step=record_step,
+            start_index=start_index,
+            # A ``run`` step is handed the same file the run was given, so the
+            # script and the plan cannot disagree about the record.
+            values_file=values_file,
+            before_step=_checkpoint(offset, where) if stage_steps else None,
+            on_step=_record(offset) if stage_steps else None,
+            reacquire=refresh if stage_steps else None,
             sleep=sleep,
             output=output,
         )
+
+    total_steps = 0
+    problems: list[str] = []
+    warnings: list[str] = []
+    filled: dict = {}
+    plan_inspection = inspection
+
+    try:
+        if once_config:
+            once_result = _stage(
+                once_config, values, start_index=resume.index, offset=0
+            )
+            total_steps += once_result.steps_run
+            problems = list(once_result.problems)
+            warnings = list(once_result.warnings)
+            filled = dict(once_result.fields)
+            plan_inspection = once_result.inspection
+
+        # One document: the header above, then these steps once per row. Save
+        # comes after the last row, once, and is not one of these steps.
+        for number, row in enumerate(rows, start=1):
+            if problems:
+                break
+            output(f"  row {number} of {len(rows)}")
+            row_result = _stage(
+                row_config,
+                {**values, **row},
+                start_index=0,
+                offset=len(once_steps),
+                where=f"row {number}",
+            )
+            total_steps += row_result.steps_run
+            problems.extend(row_result.problems)
+            warnings.extend(row_result.warnings)
+            filled.update(row_result.fields)
+            plan_inspection = row_result.inspection
     except RunnerAborted as exc:
         item.finish(OUTCOME_ABORTED, _now())
         save_progress(item, progress_root)
@@ -397,20 +639,26 @@ def run_automation(
             progress=item,
         )
 
-    for warning in plan_result.warnings:
+    for warning in warnings:
         output(f"  note: {warning}")
-    if plan_result.problems:
+    if problems:
         item.finish(OUTCOME_FAILED, _now())
         save_progress(item, progress_root)
         return AutomationRun(
             status=FAILED,
             automation=name,
-            message="; ".join(plan_result.problems),
+            message="; ".join(problems),
             start_index=resume.index,
-            steps_run=plan_result.steps_run,
+            steps_run=total_steps,
             resume=resume,
             progress=item,
         )
+
+    # The footprint check looks for this document's values anywhere on screen,
+    # so it covers every row, not just the last one typed.
+    save_values = dict(values)
+    for row in rows:
+        save_values.update(row)
 
     # Write ahead: from here until the confirmation the screen is ambiguous, and
     # this marker is what stops the next run from clicking Save again blindly.
@@ -421,10 +669,10 @@ def run_automation(
     try:
         saved = save_call(
             config=config,
-            window=window,
-            inspection=plan_result.inspection,
-            fields=plan_result.fields,
-            values=values,
+            window=screen_state["window"],
+            inspection=plan_inspection,
+            fields=filled,
+            values=save_values,
             controller=controller,
             confirmation=confirmation,
             screenshot_dir=screenshot_dir,
@@ -444,7 +692,7 @@ def run_automation(
                 "and the next run will stop for it"
             ),
             start_index=resume.index,
-            steps_run=plan_result.steps_run,
+            steps_run=total_steps,
             resume=resume,
             progress=item,
         )
@@ -459,7 +707,7 @@ def run_automation(
             automation=name,
             message="the Save button was not on screen; nothing was clicked",
             start_index=resume.index,
-            steps_run=plan_result.steps_run,
+            steps_run=total_steps,
             resume=resume,
             progress=item,
         )
@@ -472,7 +720,7 @@ def run_automation(
             automation=name,
             message=f"record saved and confirmed ({saved.outcome.reason})",
             start_index=resume.index,
-            steps_run=plan_result.steps_run,
+            steps_run=total_steps,
             resume=resume,
             progress=item,
             save=saved,
@@ -488,7 +736,7 @@ def run_automation(
             "the save is unresolved and the next run will stop for it"
         ),
         start_index=resume.index,
-        steps_run=plan_result.steps_run,
+        steps_run=total_steps,
         resume=resume,
         progress=item,
         save=saved,

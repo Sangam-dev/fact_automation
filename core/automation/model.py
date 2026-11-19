@@ -55,16 +55,35 @@ class Checkpoint(BaseModel):
 
 
 class AutomationStep(BaseModel):
-    """One click or one typed value, with the screen it expects first."""
+    """One interaction, with the screen it expects first.
+
+    ``click`` / ``double_click`` name a button; ``fill`` types a data value into
+    a field; ``key`` presses a key or a chord with no target at all; ``run``
+    hands the screen to a script that already knows how to drive it (the
+    deterministic form filler), and is a step like any other so that a plan can
+    be navigation, then that script, then more steps.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    action: Literal["click", "fill"]
+    action: Literal["click", "double_click", "fill", "key", "run"]
     button: str | None = None
     key: str | None = None
     field: str | None = None
+    #: The keys a ``key`` step presses, e.g. ``"Enter"`` or ``"Ctrl+S"``.
+    keys: str | None = None
+    #: The script a ``run`` step executes, relative to the project root.
+    script: str | None = None
+    #: Arguments for that script; ``{values_file}`` and ``{job_id}`` are filled
+    #: in from the run, so the script types the same record the plan was given.
+    args: list[str] = Field(default_factory=list)
+    #: How long a ``run`` step may take before it is stopped.
+    timeout_seconds: float | None = None
     optional: bool = False
+    #: Runs once per row of the values file's ``rows`` list, instead of once
+    #: per record. A document with N line items is one record, not N.
+    per_row: bool = False
     checkpoint: Checkpoint
 
     @field_validator("id")
@@ -80,27 +99,88 @@ class AutomationStep(BaseModel):
 
     @model_validator(mode="after")
     def _action_fields(self) -> "AutomationStep":
-        if self.action == "click":
+        if self.action in ("click", "double_click"):
             button = (self.button or "").strip()
             if not button:
-                raise ValueError("a click step needs a button name")
+                raise ValueError(f"a {self.action} step needs a button name")
             object.__setattr__(self, "button", button)
-            if self.key or self.field:
-                raise ValueError("a click step has no key or field")
+            if self.key or self.field or self.keys:
+                raise ValueError(f"a {self.action} step has no key, field or keys")
+            self._no_script()
+        elif self.action == "key":
+            keys = (self.keys or "").strip()
+            if not keys:
+                raise ValueError("a key step needs the keys to press, e.g. \"Enter\"")
+            if len(keys.split("+")) > 2:
+                raise ValueError(
+                    f"{keys!r} names more than one modifier; write it as Ctrl+S"
+                )
+            object.__setattr__(self, "keys", keys)
+            if self.button or self.key or self.field:
+                raise ValueError("a key step has no button, key or field")
+            self._no_script()
+        elif self.action == "run":
+            script = (self.script or "").strip()
+            if not script:
+                raise ValueError(
+                    "a run step needs the script to run, e.g. "
+                    '"execution/scripts/form_filler_1.py"'
+                )
+            object.__setattr__(self, "script", script)
+            if self.button or self.key or self.field or self.keys:
+                raise ValueError("a run step has no button, key, field or keys")
+            if self.per_row:
+                raise ValueError(
+                    "a run step cannot repeat per row: it fills one form, and "
+                    "the line items are its own business, not the plan's"
+                )
+            timeout = 900.0 if self.timeout_seconds is None else float(
+                self.timeout_seconds
+            )
+            if timeout <= 0:
+                raise ValueError(
+                    "a run step's timeout has to be more than zero seconds"
+                )
+            object.__setattr__(self, "timeout_seconds", timeout)
+            object.__setattr__(self, "args", [str(item) for item in self.args])
+            # A script types into the form, so it can never be replayed in
+            # place: a resumed run walks back to the click that opened the form.
+            if self.checkpoint.resume != "restart":
+                raise ValueError(
+                    "a run step types into the form, so its checkpoint has to "
+                    'say "resume": "restart"; resuming it in place would type '
+                    "the same values over themselves"
+                )
         else:
             key = (self.key or "").strip()
             if not key:
                 raise ValueError("a fill step needs a key naming its value")
             object.__setattr__(self, "key", key)
-            if self.button:
-                raise ValueError("a fill step has no button")
+            if self.button or self.keys:
+                raise ValueError("a fill step has no button or keys")
             if self.field is not None:
                 field = self.field.strip()
                 object.__setattr__(self, "field", field or None)
+            self._no_script()
         return self
 
+    def _no_script(self) -> None:
+        """Refuse a script on a step that is not a ``run`` step."""
+        if self.script or self.args or self.timeout_seconds is not None:
+            raise ValueError(
+                f"a {self.action} step has no script, args or timeout; "
+                "only a run step does"
+            )
+
     def describe(self) -> str:
-        target = self.button if self.action == "click" else (self.field or self.key)
+        if self.action == "key":
+            target = self.keys
+        elif self.action in ("click", "double_click"):
+            target = self.button
+        elif self.action == "run":
+            target = self.script
+        else:
+            target = self.field or self.key
         return f"{self.id} ({self.action} {target!r})"
 
 
@@ -135,6 +215,12 @@ class Automation(BaseModel):
     created_at: str = ""
     updated_at: str = ""
     verified: bool = False
+    #: How long one screen change may take. Clicking Login can spend seconds
+    #: before the main window is drawable, and FACT swaps whole windows between
+    #: screens, so every wait in the runner is this one number: the per-step
+    #: checkpoint, the re-read after a click, and the wait for a learned rule.
+    #: Raise it on a slow machine or a slow module; lower it to fail faster.
+    wait_seconds: float = Field(default=15.0, ge=0.5, le=120)
     app: AppConfig
     fields: list[FieldConfig] = Field(default_factory=list)
     steps: list[AutomationStep] = Field(min_length=1)
@@ -178,7 +264,7 @@ class Automation(BaseModel):
         double_save = [
             step.id
             for step in self.steps
-            if step.action == "click"
+            if step.action in ("click", "double_click")
             and step.button
             and step.button.casefold() == self.save.button.casefold()
         ]
@@ -196,6 +282,18 @@ class Automation(BaseModel):
                 "save.footprint names field(s) that `fields` does not declare: "
                 + ", ".join(repr(name) for name in unknown_footprint)
             )
+
+        # The repeating part is one block: a step that runs once cannot sit
+        # between two that run for every row, because "once" would then mean
+        # "once per row" and the plan would say something it does not do.
+        flags = [step.per_row for step in self.steps]
+        if any(flags) and flags != sorted(flags):
+            first = flags.index(True)
+            raise ValueError(
+                "step(s) that do not repeat come after step(s) that repeat per row "
+                f"({self.steps[flags.index(False, first)].id!r}); put every per-row "
+                "step in one block at the end"
+            )
         return self
 
     # ------------------------------------------------------------- inspection --
@@ -207,12 +305,33 @@ class Automation(BaseModel):
         return [step.id for step in self.steps]
 
     def fill_keys(self) -> list[str]:
-        """Every record key the plan types, in first-use order."""
+        """Every key the plan types once, per record, in first-use order."""
         return list(
             dict.fromkeys(
-                step.key for step in self.steps if step.action == "fill" and step.key
+                step.key
+                for step in self.steps
+                if step.action == "fill" and step.key and not step.per_row
             )
         )
+
+    def row_keys(self) -> list[str]:
+        """Every key the plan types once per row, in first-use order."""
+        return list(
+            dict.fromkeys(
+                step.key
+                for step in self.steps
+                if step.action == "fill" and step.key and step.per_row
+            )
+        )
+
+    def split_steps(self) -> tuple[list[AutomationStep], list[AutomationStep]]:
+        """``(steps that run once, steps that repeat per row)``."""
+        once = [step for step in self.steps if not step.per_row]
+        rows = [step for step in self.steps if step.per_row]
+        return once, rows
+
+    def repeats_per_row(self) -> bool:
+        return any(step.per_row for step in self.steps)
 
     def validate_states(self, known: Iterable[str]) -> None:
         """Fail if a checkpoint names a screen the recogniser does not know.
@@ -240,8 +359,14 @@ class Automation(BaseModel):
         steps: list[dict] = []
         for step in self.steps:
             payload: dict = {"action": step.action, "optional": step.optional}
-            if step.action == "click":
+            if step.action in ("click", "double_click"):
                 payload["button"] = step.button
+            elif step.action == "key":
+                payload["keys"] = step.keys
+            elif step.action == "run":
+                payload["script"] = step.script
+                payload["args"] = list(step.args)
+                payload["timeout_seconds"] = step.timeout_seconds
             else:
                 payload["key"] = step.key
                 if step.field:
