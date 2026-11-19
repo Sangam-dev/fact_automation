@@ -26,4 +26,5 @@ data/steps/*
 
 # Interactive wizard generated configs
 config/generated/
-
+fact_epr_ai_automation_plan.md
+recorder.py
