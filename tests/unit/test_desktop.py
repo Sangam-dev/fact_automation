@@ -126,6 +126,47 @@ def test_capture_maps_image_pixels_to_screen() -> None:
     assert capture.to_screen(10, 20) == (105, 240)
 
 
+def test_an_image_button_takes_its_label_from_the_automation_id() -> None:
+    candidate = UIACandidate(
+        candidate_id="W1",
+        name="System.Drawing.Bitmap",
+        control_type="Pane",
+        automation_id="btnLogin",
+        class_name="WindowsForms10.Window.b.app",
+        rect=Rect(10, 10, 110, 44),
+        value="",
+        enabled=True,
+    )
+
+    assert candidate.label == "btnLogin"
+
+
+def test_a_captioned_button_keeps_its_caption() -> None:
+    candidate = UIACandidate(
+        candidate_id="W1",
+        name="Save && New",
+        control_type="Button",
+        automation_id="hlblSave_New",
+        class_name="WindowsForms10.Window.b.app",
+        rect=Rect(10, 10, 110, 44),
+        value="",
+        enabled=True,
+    )
+
+    assert candidate.label == "Save && New"
+
+
+def test_a_small_captioned_pane_counts_as_a_button() -> None:
+    from desktop.uia.uia import _looks_like_button
+
+    assert _looks_like_button(Rect(0, 0, 116, 33), "Login", "")
+    assert _looks_like_button(
+        Rect(0, 0, 900, 900), "System.Drawing.Bitmap", "btnLogin"
+    )
+    assert not _looks_like_button(Rect(0, 0, 600, 400), "Panel", "")
+    assert not _looks_like_button(Rect(0, 0, 900, 900), "", "")
+
+
 def test_annotate_candidates_draws_boxes_and_keeps_the_source(
     tmp_path: Path,
 ) -> None:
@@ -169,10 +210,48 @@ def test_annotate_candidates_skips_offscreen_boxes(tmp_path: Path) -> None:
     assert Image.open(output).getpixel((0, 0)) == (255, 255, 255)
 
 
+def test_pinning_an_app_lifts_new_windows_and_leaves_pinned_ones_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from desktop.windows import window as windows
+    import win32con
+
+    windows_found = [
+        SimpleNamespace(handle=10, process_name="FACTERPNG.exe", title="main"),
+        SimpleNamespace(handle=20, process_name="FACTERPNG.exe", title="form"),
+        SimpleNamespace(handle=30, process_name="Code.exe", title="other"),
+    ]
+    already = {10}  # the window we pinned earlier
+    calls: list[tuple] = []
+
+    monkeypatch.setattr(windows, "list_windows", lambda: windows_found)
+    monkeypatch.setattr(windows, "is_topmost", lambda handle: handle in already)
+    monkeypatch.setattr(
+        windows.win32gui,
+        "SetWindowPos",
+        lambda handle, insert_after, *args: calls.append((handle, insert_after)),
+    )
+
+    pinned = windows.pin_app_windows("FACTERPNG.exe")
+
+    # Only the window that is not topmost yet is moved, so the keeper stops
+    # pulling the target in front of our own chat window every tick.
+    assert pinned == [20]
+    assert calls == [(20, win32con.HWND_TOPMOST)]
+
+
 def test_pin_and_unpin_window(monkeypatch: pytest.MonkeyPatch) -> None:
     from desktop.windows.window import pin_window, pinned_window
     import win32con
 
+    flags = (
+        win32con.SWP_NOMOVE
+        | win32con.SWP_NOSIZE
+        | win32con.SWP_SHOWWINDOW
+        | win32con.SWP_NOACTIVATE
+    )
     calls = []
 
     def mock_set_window_pos(hwnd, insert_after, x, y, cx, cy, flags):
@@ -190,7 +269,7 @@ def test_pin_and_unpin_window(monkeypatch: pytest.MonkeyPatch) -> None:
     calls.clear()
     with pinned_window(200):
         assert len(calls) == 1
-        assert calls[0] == (200, win32con.HWND_TOPMOST, win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW)
+        assert calls[0] == (200, win32con.HWND_TOPMOST, flags)
     assert len(calls) == 2
-    assert calls[1] == (200, win32con.HWND_NOTOPMOST, win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW)
+    assert calls[1] == (200, win32con.HWND_NOTOPMOST, flags)
 

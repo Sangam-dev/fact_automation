@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -10,12 +11,18 @@ import win32con
 import win32gui
 from pywinauto import Desktop
 
-from desktop.types import Rect, UIACandidate, WindowInfo
+from desktop.types import (
+    CLICKABLE_CONTROL_TYPES,
+    CONTAINER_CONTROL_TYPES,
+    Rect,
+    UIACandidate,
+    WindowInfo,
+)
 from desktop.windows.window import get_window
 
-# Controls that are useful for grounding: fields, buttons, and labels.
-_INTERESTING_TYPES = {
-    "Button",
+# Controls that are useful for grounding: fields, labels, and check boxes.
+# Clickable types are handled separately through CLICKABLE_CONTROL_TYPES.
+_LABEL_TYPES = {
     "CheckBox",
     "ComboBox",
     "Document",
@@ -32,6 +39,31 @@ _INTERESTING_TYPES = {
 
 # Table rows and cells; the records a saved entry turns into.
 _DATA_ITEM_TYPES = {"DataItem", "DataGrid"}
+
+# A custom-painted button is a small container, while a real panel is large.
+# Listing every Pane would bury the planner in layout noise, so a container is
+# only a candidate when it carries a button-style automation id or a caption
+# and is roughly button-sized.
+_BUTTON_ID = re.compile(r"^(btn|hlbl|cmd|link|lnk|button)", re.IGNORECASE)
+_MAX_BUTTON_WIDTH = 520
+_MAX_BUTTON_HEIGHT = 120
+
+
+def _looks_like_button(
+    bounds: Rect,
+    name: str,
+    automation_id: str,
+    scale: float = 1.0,
+) -> bool:
+    """True for a Pane/Custom/Group that a user would call a button."""
+    if _BUTTON_ID.match(automation_id):
+        return True
+    if not name.strip():
+        return False
+    return (
+        bounds.width <= _MAX_BUTTON_WIDTH * scale
+        and bounds.height <= _MAX_BUTTON_HEIGHT * scale
+    )
 
 
 class UIAError(RuntimeError):
@@ -169,11 +201,7 @@ def inspect_window(
     the record a local Save check looks for, so they are opt-in.
     """
     window = _visible_window(window)
-    interesting = (
-        _INTERESTING_TYPES | _DATA_ITEM_TYPES
-        if include_data_items
-        else _INTERESTING_TYPES
-    )
+    interesting = _LABEL_TYPES | (_DATA_ITEM_TYPES if include_data_items else set())
     try:
         spec = Desktop(backend="uia").window(handle=window.handle)
         spec.wait("exists", timeout=3.0)
@@ -192,7 +220,10 @@ def inspect_window(
             if not bool(getattr(info, "visible", True)):
                 continue
             control_type = str(getattr(info, "control_type", "") or "")
-            if control_type not in interesting:
+            if (
+                control_type not in CLICKABLE_CONTROL_TYPES
+                and control_type not in interesting
+            ):
                 continue
             bounds = _rect(getattr(info, "rectangle", None))
             if bounds is None or not bounds.intersects(window.rect):
@@ -200,6 +231,16 @@ def inspect_window(
 
             name = str(getattr(info, "name", "") or "").strip()
             automation_id = str(getattr(info, "automation_id", "") or "").strip()
+            if (
+                control_type in CONTAINER_CONTROL_TYPES
+                and not _looks_like_button(
+                    bounds,
+                    name,
+                    automation_id,
+                    window.dpi_scale,
+                )
+            ):
+                continue
             value = _read_value(control)
             if not (name or automation_id or value):
                 continue

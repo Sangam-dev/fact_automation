@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes as wintypes
 import os
+import threading
 from contextlib import contextmanager
 from typing import Generator
 
@@ -64,7 +65,8 @@ def enable_dpi_awareness() -> None:
     _dpi_awareness_set = True
 
 
-def _process_name(process_id: int) -> str:
+def process_path(process_id: int) -> str:
+    """The full path of a running process, or "" when Windows will not say."""
     if not process_id:
         return ""
     handle = _kernel32.OpenProcess(
@@ -76,10 +78,14 @@ def _process_name(process_id: int) -> str:
         size = wintypes.DWORD(32768)
         buffer = ctypes.create_unicode_buffer(size.value)
         if _kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
-            return os.path.basename(buffer.value)
+            return buffer.value
     finally:
         _kernel32.CloseHandle(handle)
     return ""
+
+
+def _process_name(process_id: int) -> str:
+    return os.path.basename(process_path(process_id))
 
 
 def _window_rect(hwnd: int) -> Rect:
@@ -239,7 +245,14 @@ def focus_window(window: WindowInfo) -> bool:
 
 def pin_window(hwnd: int, pin: bool = True) -> bool:
     """Pin the target window always-on-top, or unpin it to normal z-order."""
-    flags = win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW
+    # ``SWP_NOACTIVATE`` keeps the target on top without pulling keyboard focus
+    # away from the console or chat window the user is typing in.
+    flags = (
+        win32con.SWP_NOMOVE
+        | win32con.SWP_NOSIZE
+        | win32con.SWP_SHOWWINDOW
+        | win32con.SWP_NOACTIVATE
+    )
     insert_after = win32con.HWND_TOPMOST if pin else win32con.HWND_NOTOPMOST
     try:
         win32gui.SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, flags)
@@ -260,6 +273,89 @@ def pinned_window(hwnd: int, pin: bool = True) -> Generator[None, None, None]:
             pin_window(hwnd, False)
 
 
+def is_topmost(hwnd: int) -> bool:
+    """True when the window is already in the always-on-top band."""
+    try:
+        style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+    except Exception:
+        return False
+    return bool(style & win32con.WS_EX_TOPMOST)
+
+
+def pin_app_windows(process_name: str, pin: bool = True) -> list[int]:
+    """Put every visible window the app owns into the topmost band.
+
+    Pinning only the window we attached to is not enough: a topmost window is
+    drawn above every *normal* window, so a form FACT opens afterwards lands
+    behind the window we pinned. Pinning every window the app owns keeps the
+    whole app above our chat overlay and leaves the order it stacks its own
+    windows in untouched - a form it opens still comes to the front.
+
+    A window that is already topmost is left where it is. Re-pinning it would
+    put it at the front of the band again, which is how a pinned target ended up
+    covering our own chat window. Only new windows are lifted, so nothing fights
+    over the front.
+    """
+    if not process_name:
+        return []
+    insert_after = win32con.HWND_TOPMOST if pin else win32con.HWND_NOTOPMOST
+    flags = win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
+    pinned: list[int] = []
+    for window in list_windows():
+        if not _process_matches(window.process_name, process_name):
+            continue
+        if pin and is_topmost(window.handle):
+            continue
+        try:
+            win32gui.SetWindowPos(window.handle, insert_after, 0, 0, 0, 0, flags)
+        except Exception:
+            continue
+        pinned.append(window.handle)
+    return pinned
+
+
+#: How often the keeper looks for a window the app has opened since last time.
+PIN_INTERVAL_SECONDS = 0.3
+
+
+class _PinKeeper(threading.Thread):
+    """Keep pinning the app's windows while this process is running."""
+
+    def __init__(self, process_name: str, interval: float) -> None:
+        super().__init__(daemon=True, name="pin-target-windows")
+        self.process_name = process_name
+        self.interval = interval
+        self.stopped = threading.Event()
+
+    def run(self) -> None:
+        while not self.stopped.wait(self.interval):
+            pin_app_windows(self.process_name)
+
+
+_keepers: dict[str, _PinKeeper] = {}
+_keepers_lock = threading.Lock()
+
+
+def keep_windows_pinned(
+    process_name: str | None, interval: float = PIN_INTERVAL_SECONDS
+) -> bool:
+    """Pin the app's windows now, and keep pinning the ones it opens later.
+
+    A window opened after the pin was applied would otherwise sit behind the
+    rest of its own app. The keeper runs for as long as this process does.
+    """
+    if not process_name:
+        return False
+    with _keepers_lock:
+        keeper = _keepers.get(process_name)
+        if keeper is None or not keeper.is_alive():
+            keeper = _PinKeeper(process_name, interval)
+            _keepers[process_name] = keeper
+            keeper.start()
+    pin_app_windows(process_name)
+    return True
+
+
 def attach_window(config: AppConfig) -> WindowInfo:
     """Find the target window, bring it to the foreground, and optionally pin it."""
     window = find_window(config.title_contains, config.process_name)
@@ -267,7 +363,7 @@ def attach_window(config: AppConfig) -> WindowInfo:
     should_focus = (
         win32gui.IsIconic(window.handle)
         or config.require_foreground
-        or getattr(config, "pin_window", True)
+        or getattr(config, "pin_window", False)
     )
     if should_focus:
         focus_window(window)
@@ -282,8 +378,8 @@ def attach_window(config: AppConfig) -> WindowInfo:
             "target window is not in the foreground; click it once and retry"
         )
 
-    if getattr(config, "pin_window", True):
-        pin_window(window.handle, True)
+    if getattr(config, "pin_window", False):
+        keep_windows_pinned(window.process_name)
 
     return window
 

@@ -29,6 +29,14 @@ from desktop.state.states import ControlNeed, StateSpec, StateTable
 # The dark border drawn behind each form; it has no title and no controls.
 IGNORED_CLASSES = frozenset({"ShadowWindow"})
 
+#: How many windows on top are worth reading.
+#:
+#: FACT keeps dozens of forms alive (89 were counted on a live session), most of
+#: them hidden. Only the top few can be the screen the user is looking at, and
+#: asking UI Automation for every one's automation id is what used to turn a
+#: state check into minutes of waiting.
+MAX_LIVE_WINDOWS = 8
+
 # What the recognizer reports besides a learned state id.
 CLOSED = "CLOSED"
 STARTING = "STARTING"
@@ -327,6 +335,17 @@ def _process_matches(actual: str, wanted: str) -> bool:
     )
 
 
+def _is_visible(handle: int) -> bool:
+    """True when Windows draws this window right now (one cheap Win32 call)."""
+    try:
+        import win32gui
+
+        return bool(win32gui.IsWindowVisible(int(handle)))
+    except Exception:
+        # Cannot tell: keep the window and let the title/id checks decide.
+        return True
+
+
 def _window_auto_id(handle: int) -> str:
     """The window's UIA automation id, which Win32 alone cannot report."""
     try:
@@ -375,6 +394,14 @@ def observe(
     for z_order, info in enumerate(list_windows()):
         if not _process_matches(info.process_name, process):
             continue
+        if not str(info.title or "").strip():
+            continue
+        if not _is_visible(info.handle):
+            continue
+        if len(windows) >= MAX_LIVE_WINDOWS:
+            # Everything below the top few is not on screen, so it cannot be
+            # the state; reading it costs a UIA round trip each time.
+            break
         handle = int(info.handle)
         windows.append(
             WindowView(
