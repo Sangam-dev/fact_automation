@@ -28,12 +28,13 @@ def _candidate(
     name: str,
     control_type: str = "Button",
     rect: Rect | None = None,
+    automation_id: str = "",
 ) -> UIACandidate:
     return UIACandidate(
         candidate_id=candidate_id,
         name=name,
         control_type=control_type,
-        automation_id="",
+        automation_id=automation_id,
         class_name="",
         rect=rect or Rect(10, 10, 110, 34),
         value="",
@@ -108,6 +109,48 @@ def test_a_click_resolves_to_the_live_button_name() -> None:
     assert plan.fills == ()
 
 
+def test_a_pane_or_hyperlink_counts_as_a_button() -> None:
+    candidates = (
+        _candidate("W1", "Login", "Pane"),
+        _candidate("W2", "Register here", "Hyperlink"),
+    )
+
+    for label, kind in (("Login", "Pane"), ("Register here", "Hyperlink")):
+        plan = parse_step_plan(
+            {"kind": "click", "button": label.lower(), "confidence": 0.9},
+            candidates=candidates,
+            fields=HEADERS,
+        )
+        assert plan.kind == "click"
+        assert plan.label == label
+
+
+def test_an_image_button_is_matched_by_its_automation_id() -> None:
+    candidates = (
+        _candidate("W1", "System.Drawing.Bitmap", "Pane", automation_id="btnLogin"),
+    )
+
+    plan = parse_step_plan(
+        {"kind": "click", "button": "btnLogin"},
+        candidates=candidates,
+        fields=HEADERS,
+    )
+
+    assert plan.label == "btnLogin"
+
+
+def test_winforms_accelerators_are_ignored_when_matching() -> None:
+    candidates = (_candidate("W1", "&Save && New", "Button"),)
+
+    plan = parse_step_plan(
+        {"kind": "click", "button": "Save & New"},
+        candidates=candidates,
+        fields=HEADERS,
+    )
+
+    assert plan.label == "&Save && New"
+
+
 def test_an_unknown_button_names_the_nearby_ones() -> None:
     with pytest.raises(StepPlanError) as caught:
         parse_step_plan(
@@ -117,7 +160,7 @@ def test_an_unknown_button_names_the_nearby_ones() -> None:
         )
 
     message = str(caught.value)
-    assert "no button on this screen is named 'Add'" in message
+    assert "no clickable control on this screen is named 'Add'" in message
     assert "Add New" in message
 
 
@@ -349,7 +392,7 @@ def test_a_null_button_is_a_plan_error_not_a_crash() -> None:
 def test_a_click_on_a_screen_without_buttons_says_so() -> None:
     candidates = (_candidate("W1", "Invoice No.", "Edit"),)
 
-    with pytest.raises(StepPlanError, match="exposes no buttons"):
+    with pytest.raises(StepPlanError, match="exposes no clickable controls"):
         parse_step_plan(
             {"kind": "click", "button": "Add"},
             candidates=candidates,

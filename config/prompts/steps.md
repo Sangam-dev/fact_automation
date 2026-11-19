@@ -7,9 +7,10 @@ You are given:
 3. The business data fields the workflow may enter.
 4. One instruction, written by the user in plain words, and possibly a correction.
 
-The user is teaching an agent to drive this form. The agent can do exactly two
-things: click a button, and type text into a text field. Your job is to turn the
-instruction into those actions, in the order to do them.
+The user is teaching an agent to drive this form. The agent can do exactly four
+things: click a button, double-click a control, type text into a text field, and
+press a key. Your job is to turn the instruction into those actions, in the
+order to do them.
 
 Return ONE JSON object and nothing else. No markdown, no commentary.
 
@@ -26,8 +27,11 @@ Apply the correction on top of the instruction. When the correction is
 
 ## UIA controls
 
-{{CANDIDATE_COUNT}} control(s) were found. A control with `type=Button` can be
-clicked. Controls with `type=Edit`, `Document` or `Spinner` accept typed text.
+{{CANDIDATE_COUNT}} control(s) were found. Controls with `type=Button`,
+`Hyperlink`, `SplitButton`, `Image`, `MenuItem`, `TabItem`, `ListItem`,
+`TreeItem`, `Pane`, `Custom` or `Group` can be clicked; prefer `Button`/
+`Hyperlink` when one matches. Controls with `type=Edit`, `Document` or
+`Spinner` accept typed text.
 
 {{CANDIDATES}}
 
@@ -37,10 +41,20 @@ clicked. Controls with `type=Edit`, `Document` or `Spinner` accept typed text.
 
 ## Rules
 
-- `kind` is `click` when the instruction clicks a button, and `fill` when it
-  types data into one or more text fields.
-- For `click`, `button` must be the exact `name` of one `Button` control from
-  the list above. Copy the name; never invent, shorten or translate it.
+- `kind` is `click` when the instruction clicks a button, `double_click` when
+  it says double-click or open a listed record, `fill` when it types data into
+  one or more text fields, and `key` when it presses a key.
+- For `click` and `double_click`, `button` must be copied exactly from one
+  clickable control's `name`, `automation_id` or `label` in the list above. Copy
+  it; never invent, shorten or translate it.
+- For `key`, put the key in `keys` as a person writes it: `Enter`, `Tab`, `Esc`,
+  `F5`, or one modifier chord such as `Ctrl+S` or `Shift+Tab`. Use it only when
+  the instruction actually asks for a key press.
+- Many toolkits draw real buttons as `Pane`, `Custom` or `Group`. When the
+  instruction names one of them, it is a legitimate click target.
+- When a control's `name` is a generic drawing name such as
+  `System.Drawing.Bitmap`, use its `automation_id` (for example `btnLogin`)
+  as `button`; the name alone identifies nothing.
 - For `fill`, list one entry per field the instruction types into, in the order
   the agent should type. `field` must be the exact `name` of one text control
   from the list above. `key` must be one of the business data fields above,
@@ -51,9 +65,11 @@ clicked. Controls with `type=Edit`, `Document` or `Spinner` accept typed text.
 - Never list the same field twice, and never list the same data key twice.
 - The screenshot may already show data typed by earlier steps. Trust the
   instruction, not the current contents of the boxes.
-- Dropdowns, combo boxes, check boxes, radio buttons, dates, sliders and grid
-  cells cannot be driven yet. When the instruction can only be done with one
-  of them, return `kind` `unsupported` and explain in `reason`.
+- Dropdowns, check boxes, radio buttons, date pickers and grid cells have no
+  action of their own. A combo box is driven by clicking it and then pressing a
+  key (`Tab` or `Enter`): split such an instruction into those steps. When the
+  instruction needs something no combination of the four actions can do, return
+  `kind` `unsupported` and explain in `reason`.
 - When the instruction names nothing that is visible on this screen, return
   `kind` `unclear` and explain in `reason`.
 - Never leave `button` or `field` empty or `null`. If nothing in the control
@@ -68,10 +84,18 @@ clicked. Controls with `type=Edit`, `Document` or `Spinner` accept typed text.
 {
   "kind": "click",
   "button": "Add New",
+  "keys": "",
   "fills": [
     { "key": "invoice_number", "field": "Invoice No.", "confidence": 0.0 }
   ],
   "reason": "",
   "confidence": 0.0
 }
+```
+
+For a double-click use the same shape with `"kind": "double_click"`. For a key
+press send only the key:
+
+```json
+{ "kind": "key", "keys": "Enter", "reason": "", "confidence": 0.0 }
 ```

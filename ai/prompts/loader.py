@@ -54,10 +54,14 @@ def format_candidates(candidates: Iterable[UIACandidate]) -> str:
     """Render UIA candidates as one compact line each."""
     lines: list[str] = []
     for candidate in candidates:
+        label = candidate.label
+        label_part = (
+            f" | label={label}" if label and label != candidate.name else ""
+        )
         lines.append(
             f"- {candidate.candidate_id} | type={candidate.control_type} | "
             f"name={candidate.name or '-'} | "
-            f"automation_id={candidate.automation_id or '-'} | "
+            f"automation_id={candidate.automation_id or '-'}{label_part} | "
             f"value={candidate.value[:60] or '-'} | "
             f"rect={candidate.rect.bbox}"
         )

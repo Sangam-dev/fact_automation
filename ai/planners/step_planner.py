@@ -1,9 +1,10 @@
 """One user-written instruction + screenshot -> concrete click/fill actions.
 
 Multi-step mode asks the user, in their own words, what to do next ("click Add
-New", "fill up all the form"). This module turns that one sentence into the two
-actions the deterministic executor already knows: click a named button, or type
-one declared data field into one named text field.
+New", "double-click the order", "fill up all the form"). This module turns that
+one sentence into an action the deterministic executor knows: click or
+double-click a named control, type one declared data field into one named text
+field, or press a key.
 
 The AI runs once per step, while the user is watching and about to approve the
 result. Nothing here is used when rows are replayed.
@@ -19,13 +20,17 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from core.config import GeminiConfig
 from desktop.screenshots.capture import Capture
-from desktop.types import UIACandidate
+from desktop.types import (
+    CLICKABLE_CONTROL_TYPES,
+    EDITABLE_CONTROL_TYPES,
+    UIACandidate,
+)
 from desktop.screenshots.images import prepare_image
 from ai.providers.gemini import GeminiClient
 from ai.prompts.loader import format_candidates, load_prompt, render_prompt
 
-BUTTON_TYPES = frozenset({"Button"})
-EDITABLE_TYPES = frozenset({"Edit", "Document", "Spinner"})
+BUTTON_TYPES = CLICKABLE_CONTROL_TYPES
+EDITABLE_TYPES = EDITABLE_CONTROL_TYPES
 
 
 class StepPlanError(RuntimeError):
@@ -49,8 +54,11 @@ class PlannedFill:
 class StepPlan:
     """The concrete actions one instruction resolves to."""
 
-    kind: Literal["click", "fill"]
+    kind: Literal["click", "double_click", "fill", "key"]
     label: str = ""
+    #: The keys a ``key`` plan presses (``Enter``, ``Ctrl+S``). Named
+    #: ``keypress`` because ``keys`` is already the data fields it fills.
+    keypress: str = ""
     fills: tuple[PlannedFill, ...] = ()
     confidence: float = 0.0
 
@@ -81,13 +89,16 @@ class _Fill(BaseModel):
 class _Response(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    kind: Literal["click", "fill", "unsupported", "unclear"] = "unclear"
+    kind: Literal[
+        "click", "double_click", "fill", "key", "unsupported", "unclear"
+    ] = "unclear"
     button: str = ""
+    keys: str = ""
     fills: list[_Fill] = Field(default_factory=list)
     reason: str = ""
     confidence: float = Field(default=0.0, ge=0, le=1)
 
-    @field_validator("button", "reason", mode="before")
+    @field_validator("button", "keys", "reason", mode="before")
     @classmethod
     def _no_null_text(cls, value: Any) -> Any:
         return "" if value is None else value
@@ -112,6 +123,15 @@ def _normalise(text: str) -> str:
     return " ".join(str(text).split()).casefold()
 
 
+def _match_key(text: str) -> str:
+    """Normalise a label for matching, ignoring ``&`` accelerators.
+
+    WinForms captions carry accelerators (``"&Save && New"``); the user types
+    "Save & New" or "Save New". Dropping ``&`` makes all three the same key.
+    """
+    return " ".join(str(text).replace("&", " ").split()).casefold()
+
+
 def _named(
     candidates: Sequence[UIACandidate],
     control_types: frozenset[str],
@@ -119,7 +139,8 @@ def _named(
     return [
         item
         for item in candidates
-        if item.control_type in control_types and item.name.strip()
+        if item.control_type in control_types
+        and (item.name.strip() or item.automation_id.strip() or item.label)
     ]
 
 
@@ -128,12 +149,17 @@ def match_label(
     label: str,
     control_types: frozenset[str],
 ) -> UIACandidate | None:
-    """Return the live control whose name matches *label*, ignoring case."""
-    wanted = _normalise(label)
+    """Return the live control matching *label*, by name or automation id."""
+    wanted = _match_key(label)
     if not wanted:
         return None
     for item in _named(candidates, control_types):
-        if _normalise(item.name) == wanted:
+        keys = {
+            _match_key(item.name),
+            _match_key(item.automation_id),
+            _match_key(item.label),
+        }
+        if wanted in keys:
             return item
     return None
 
@@ -144,11 +170,11 @@ def suggestions(
     control_types: frozenset[str],
     limit: int = 4,
 ) -> list[str]:
-    """Return the closest control names, for an error message."""
+    """Return the closest control labels, for an error message."""
     items = _named(candidates, control_types)
-    names = [item.name for item in items]
-    normalised = [_normalise(name) for name in names]
-    wanted = _normalise(label)
+    names = [item.label for item in items]
+    normalised = [_match_key(name) for name in names]
+    wanted = _match_key(label)
 
     picked: list[str] = []
     for close in difflib.get_close_matches(wanted, normalised, n=limit, cutoff=0.5):
@@ -187,7 +213,17 @@ def parse_step_plan(
             response.reason.strip() or "the instruction is not something this mode can do yet"
         )
 
-    if response.kind == "click":
+    if response.kind == "key":
+        spec = " ".join(response.keys.split())
+        if not spec:
+            raise StepPlanError(
+                "the instruction is a key press, but the model named no key"
+            )
+        return StepPlan(
+            kind="key", keypress=spec, confidence=response.confidence
+        )
+
+    if response.kind in ("click", "double_click"):
         label = response.button.strip()
         buttons = _named(candidates, button_types)
         if not label:
@@ -201,16 +237,18 @@ def parse_step_plan(
         if button is None:
             if not buttons:
                 raise StepPlanError(
-                    f"no button named {label!r}, and this window exposes no "
-                    "buttons to Windows UI Automation; keep the window "
-                    "restored and in front, then add the step again"
+                    f"no control named {label!r}, and this window exposes no "
+                    "clickable controls to Windows UI Automation; keep the "
+                    "window restored and in front, then add the step again"
                 )
-            message = f"no button on this screen is named {label!r}"
+            message = f"no clickable control on this screen is named {label!r}"
             near = suggestions(candidates, label, button_types)
             if near:
                 message += "; it does have " + ", ".join(repr(name) for name in near)
             raise StepPlanError(message)
-        return StepPlan(kind="click", label=button.name, confidence=response.confidence)
+        return StepPlan(
+            kind=response.kind, label=button.label, confidence=response.confidence
+        )
 
     if not response.fills:
         raise StepPlanError("the model returned no field to fill")

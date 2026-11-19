@@ -1,14 +1,15 @@
 """Interactive GUI workflow wizard.
 
-This is the generic planner/executor loop, with no workbook in it:
+This is the planner/executor loop for FACT ERP.NG, with no workbook in it:
 
-1. Pick the target application window.
+1. Attach to FACT ERP.NG by *screen*, not by a window picked from a list.
 2. Collect the business data field names and a sample record.
 3. For each step: screenshot + UIA hierarchy -> natural-language instruction ->
    AI plan -> validate the named controls -> show the plan -> approve, correct,
    or replan -> execute the approved actions.
-4. Identify the Save button, record the Save check, prove the first save, and
-   write a reusable workflow config.
+4. Write the config: the plan's last save click becomes the save action, which
+   is clicked once at the end rather than once per entry. Proving the plan -
+   and the record that proves it - happens when it is registered.
 
 Business data is supplied separately from the workflow design: the wizard asks
 for field names and a sample record, and the saved config contains only the
@@ -18,9 +19,7 @@ workflow, never the record.
 from __future__ import annotations
 
 import json
-import re
 import sys
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,24 +27,21 @@ from typing import Any
 
 from core.config import (
     AgentConfig,
-    ConfigError,
-    load_config,
+    get_gemini_model,
     load_env,
     project_root,
 )
-from desktop.screenshots.capture import CaptureError, capture_window
-from desktop.uia.uia import UIAError, inspect_window
-from desktop.windows.window import (
-    WindowError,
-    find_window,
-    focus_window,
-    list_windows,
-    pin_window,
+from desktop.state.fact import (
+    FACT_PROCESS,
+    FactError,
+    FactScreen,
+    read_current,
+    read_screen,
+    wait_for_screen,
 )
-from execution.actions.engine import execute_form_steps
-from execution.verification.controls import ResolvedTarget
-from execution.verification.evidence import decide_footprint
-from execution.workflows.runner import load_values, save_and_verify
+from desktop.uia.uia import UIAError
+from execution.actions.engine import SETTLE_SECONDS, execute_form_steps
+from execution.workflows.runner import load_values
 
 
 def _prompt(text: str, default: str | None = None) -> str:
@@ -87,68 +83,58 @@ def _clean_path(path_str: str) -> str:
     return clean.strip()
 
 
-def _select_window() -> tuple[str, str | None]:
-    """Interactively select or search for an open target window."""
+def _attach_fact() -> tuple[str, str] | None:
+    """Attach to FACT ERP.NG, without ever listing the desktop's windows.
+
+    The wizard is for one application. Asking the recogniser which FACT screen
+    is showing also means the wizard starts on whatever form the user is on
+    (Login, the menu, a Sale Order) instead of binding to a stale title.
+    """
     print()
     print("------------------------------------------------------------------------")
-    print("  STEP 1: Target Application Window")
+    print("  STEP 1: FACT ERP.NG")
     print("------------------------------------------------------------------------")
-    print("Open windows detected on your desktop:")
-
-    all_windows = list_windows()
-    filtered = [
-        w
-        for w in all_windows
-        if w.title
-        and w.process_name.lower()
-        not in ("explorer.exe", "shellexperiencehost.exe", "searchhost.exe")
-    ]
-
-    for idx, win in enumerate(filtered[:10], start=1):
-        print(f"  [{idx:2d}] {win.title} ({win.process_name})")
-
-    print()
-    print("Type a number from the list above, or enter text to search by title.")
-    while True:
-        entry = _prompt("Window selection")
-        if not entry:
-            continue
-
-        if entry.isdigit() and 1 <= int(entry) <= len(filtered):
-            selected = filtered[int(entry) - 1]
-            focus_window(selected)
-            pin_window(selected.handle, True)
-            print(
-                f"[ OK ] Selected & pinned window in front: "
-                f"{selected.title!r} ({selected.process_name})"
-            )
-            return selected.title, selected.process_name
-
-        try:
-            matched = find_window(title_contains=entry)
-            focus_window(matched)
-            pin_window(matched.handle, True)
-            print(
-                f"[ OK ] Found & pinned window in front: "
-                f"{matched.title!r} ({matched.process_name})"
-            )
-            return matched.title, matched.process_name
-        except WindowError as exc:
-            print(f"Window search failed: {exc}")
-            print("Please try again, or make sure your application is open and visible.")
-
-
-def _inspect_live(app_title: str) -> tuple[Any, Any] | None:
-    """Return ``(window, inspection)`` for the target window, or ``None``."""
+    print(f"Looking for {FACT_PROCESS} and reading the screen it is showing...")
     try:
-        window = find_window(title_contains=app_title)
-        inspection = inspect_window(window, max_elements=600)
-    except (WindowError, UIAError) as exc:
-        print(f"[WARN] Could not read the window's controls: {exc}")
+        window, match = wait_for_screen(seconds=20.0)
+    except FactError as exc:
+        print(f"[WARN] {exc}")
+        print(
+            "Open FACT ERP.NG, leave it on a screen the state table knows "
+            "(Login, Company Open, the main menu, or a Sale Order form), then "
+            "run the wizard again."
+        )
         return None
-    # inspect_window restores a minimized window, so hand back the geometry it
-    # actually read instead of the snapshot taken before.
-    return inspection.window, inspection
+    print(f"[ OK ] {match.message()}")
+    if match.stack:
+        print("       behind: " + " < ".join(match.stack))
+    print(
+        f"       window 0x{window.handle:X} {window.title!r} "
+        f"({window.process_name or FACT_PROCESS})"
+    )
+    # The title is deliberately left empty: FACT changes window titles between
+    # screens, so the process name plus the recogniser is the stable target.
+    return "", FACT_PROCESS
+
+
+def _read_fact_screen(seconds: float = 10.0) -> FactScreen | None:
+    """Capture and inspect the FACT screen that is on top right now."""
+    try:
+        return read_screen(seconds=seconds)
+    except FactError as exc:
+        print(f"[WARN] {exc}")
+        return None
+
+
+def _reacquire_fact() -> tuple[Any, Any]:
+    """Re-resolve the FACT window after a click (the executor's refresh hook)."""
+    try:
+        window, inspection, _match = read_current(seconds=5.0)
+    except FactError as exc:
+        # The executor knows how to report a UIA failure; a FactError escaping
+        # to the chat window would only produce a traceback.
+        raise UIAError(str(exc)) from exc
+    return window, inspection
 
 
 def _step_session_dir() -> Path:
@@ -165,24 +151,86 @@ def _save_shot(capture: Any, directory: Path, name: str) -> Path:
     return path
 
 
+def _take_save_step(
+    steps: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]], bool]:
+    """The save button the plan ends with, and the plan without that step.
+
+    The wizard no longer asks which button saves: the last click in the plan is
+    the one the AI found, and it becomes the save action that the runner clicks
+    once, after the last row. A plan whose last click is not a save keeps its
+    steps and saves on the default button.
+    """
+    if not steps:
+        return "Save", steps, False
+    last = steps[-1]
+    if last.get("action") != "click":
+        return "Save", steps, False
+    button = str(last.get("button") or "").strip()
+    if "save" not in button.casefold():
+        return "Save", steps, False
+    return button, steps[:-1], True
+
+
 def _describe_step(step: dict) -> str:
     """One line that names the work a step does."""
-    if step.get("action") == "click":
-        return f"click {step.get('button', '')!r}"
+    action = step.get("action")
+    if action == "run":
+        return f"run the script {step.get('script', '')!r}"
+    if action == "key":
+        return f"press {step.get('keys', '')!r}"
+    if action in ("click", "double_click"):
+        verb = "double-click" if action == "double_click" else "click"
+        return f"{verb} {step.get('button', '')!r}"
     label = step.get("field") or step.get("key", "")
     return f"fill {label!r} from field {step.get('key', '')!r}"
 
 
 def _form_steps(plan: Any) -> list[Any]:
     """Turn a resolved plan into the executor's own step models."""
-    from execution.actions.models import ClickStep, FillStep
+    from execution.actions.models import (
+        ClickStep,
+        DoubleClickStep,
+        FillStep,
+        KeyStep,
+    )
 
     if plan.kind == "click":
         return [ClickStep(action="click", button=plan.label)]
+    if plan.kind == "double_click":
+        return [DoubleClickStep(action="double_click", button=plan.label)]
+    if plan.kind == "key":
+        return [KeyStep(action="key", keys=plan.keypress)]
     return [
         FillStep(action="fill", key=fill.key, field=fill.label)
         for fill in plan.fills
     ]
+
+
+def _segment_steps(segment: Any) -> list[dict[str, Any]]:
+    """A designed segment's steps, in the order it declares them.
+
+    The segment's own checkpoints are deliberately dropped: registration proves
+    every screen by watching it, and an observed checkpoint is a fact about this
+    application where a declared one is only an intention.
+    """
+    entries: list[dict[str, Any]] = []
+    for step in segment.steps:
+        entry: dict[str, Any] = {"action": step.action, "optional": step.optional}
+        if step.action in ("click", "double_click"):
+            entry["button"] = step.button
+        elif step.action == "key":
+            entry["keys"] = step.keys
+        elif step.action == "run":
+            entry["script"] = step.script
+            entry["args"] = list(step.args)
+            entry["timeout_seconds"] = step.timeout_seconds
+        else:
+            entry["key"] = step.key
+            if step.field:
+                entry["field"] = step.field
+        entries.append(entry)
+    return entries
 
 
 def _print_step_plan(
@@ -200,7 +248,11 @@ def _print_step_plan(
     print(f"  Step {index}: {instruction}")
     print(f"  Screen   : {screenshot}")
     print("  I will do this, in order:")
-    if plan.kind == "click":
+    if plan.kind == "key":
+        print(f"    1. press {plan.keypress!r}")
+    elif plan.kind == "double_click":
+        print(f"    1. double-click {plan.label!r}")
+    elif plan.kind == "click":
         print(f"    1. click {plan.label!r}")
     else:
         for position, fill in enumerate(plan.fills, start=1):
@@ -241,7 +293,12 @@ def _review_step_plan(problem: str | None = None) -> tuple[str, str]:
 
 
 def _ask_field_names() -> list[str]:
-    """Ask which business data fields this workflow enters."""
+    """Ask which business data fields this workflow enters.
+
+    Optional: pressing Enter with no names continues to the next step. A
+    workflow built that way can still click, but it has no declared data keys
+    to fill, so the planner will only be able to plan clicks.
+    """
     print()
     print("------------------------------------------------------------------------")
     print("  STEP 2: Business Data Fields")
@@ -249,12 +306,11 @@ def _ask_field_names() -> list[str]:
     print("Name the fields this workflow types into the app. These names are the")
     print("keys the AI plans against; sample values are asked for separately and")
     print("are never written into the saved workflow.")
-    while True:
-        raw = _prompt("Field names, comma separated", default="")
-        names = [item.strip() for item in raw.split(",") if item.strip()]
-        if names:
-            return list(dict.fromkeys(names))
-        print("Enter at least one field name.")
+    raw = _prompt("Field names, comma separated (Enter to skip)", default="")
+    names = [item.strip() for item in raw.split(",") if item.strip()]
+    if not names:
+        print("  Skipped: no data keys declared, so only click steps can be planned.")
+    return list(dict.fromkeys(names))
 
 
 def _ask_sample_values(field_names: list[str]) -> dict[str, str]:
@@ -269,79 +325,6 @@ def _ask_sample_values(field_names: list[str]) -> dict[str, str]:
     for name in field_names:
         values[name] = _prompt(f"Sample value for {name!r}", default="")
     return values
-
-
-def _ask_save_button(window: Any, inspection: Any) -> str:
-    """Ask for the Save button's name, showing the buttons already on screen."""
-    try:
-        inspection = inspect_window(window)
-    except UIAError as exc:
-        print(f"  note: could not re-read the window: {exc}")
-    names = [
-        candidate.name
-        for candidate in inspection.candidates
-        if candidate.control_type == "Button" and candidate.name.strip()
-    ]
-    # A browser window lists its own chrome first, so lead with the buttons
-    # that look like Save instead of cutting them off.
-    save_like = [name for name in names if "save" in name.casefold()]
-    ordered = save_like + [name for name in names if name not in save_like]
-    if ordered:
-        shown = ", ".join(repr(name) for name in ordered[:8])
-        if len(ordered) > 8:
-            shown += f", and {len(ordered) - 8} more"
-        print(f"  Buttons on this screen: {shown}")
-    default = save_like[0] if len(save_like) == 1 else "Save"
-    known = {" ".join(name.split()).casefold() for name in names}
-    save_button = _prompt("Enter Save button text in your form", default=default)
-    while names and " ".join(save_button.split()).casefold() not in known:
-        print(f"  No button named {save_button!r} is on this screen.")
-        save_button = _prompt(
-            "Type the Save button's name exactly as listed above", default=default
-        )
-    return save_button
-
-
-def _ask_confirmation() -> dict[str, Any]:
-    """Ask what a successful save looks like, in plain language."""
-    print()
-    print("How does your app show that a save worked?")
-    print("  Type a word or phrase it displays (e.g. Saved, Success,")
-    print("  Record created). Leave it blank if it shows nothing - then each")
-    print("  Save is checked by looking for the new record instead.")
-    text = _prompt("Success text", default="")
-    cleaned = text.strip()
-    return {
-        "success_region": None,
-        "error_region": None,
-        "success_pattern": f"(?i){re.escape(cleaned)}" if cleaned else "",
-        "error_patterns": [
-            "(?i)required",
-            "(?i)invalid",
-            "(?i)error",
-        ]
-        if cleaned
-        else [],
-    }
-
-
-def _ask_save_check() -> str:
-    """Ask how every Save should be checked.
-
-    Returns ``"row"`` (local screen check), ``"text"`` (AI reads the screen) or
-    ``"none"`` (no check at all - the record is just filled and saved).
-    """
-    print()
-    print("Check the screen after every Save?")
-    print("  [y] yes - each Save is checked")
-    print("  [n] no - fill and save without checking")
-    if not _prompt_yes_no("Check the screen after each Save", default_yes=True):
-        return "none"
-    print()
-    print("Check every Save with AI? Gemini reads the screen after each Save.")
-    print("  [y] AI reads each screen")
-    print("  [n] check the new record locally (no AI, no API cost)")
-    return "text" if _prompt_yes_no("Use AI for every record", default_yes=False) else "row"
 
 
 def _config_data(
@@ -372,7 +355,9 @@ def _config_data(
             "pause_after_click_seconds": 0.5,
         },
         "gemini": {
-            "model": "gemini-3.6-flash",
+            # Whatever .env says, not a literal: the file records the model
+            # that actually planned and proved these steps.
+            "model": get_gemini_model(),
             "max_image_dimension": 1600,
             "timeout_seconds": 60,
             "max_retries": 3,
@@ -471,12 +456,24 @@ def run_wizard(
 
     load_env(env_path)
 
+    # One file is the record, and the wizard, the proof and any script step all
+    # read it: the project's own input, unless another one was named.
+    if values_path is None:
+        default_values = project_root() / "data" / "data.json"
+        if default_values.is_file():
+            values_path = str(default_values)
+
     print("=" * 72)
     print("  FACT Automation - Workflow Wizard")
     print("=" * 72)
+    if values_path:
+        print(f"  Sample record: {values_path}")
 
-    # 1. Target window
-    app_title, process_name = _select_window()
+    # 1. Target application: FACT ERP.NG only, found by the screen recogniser.
+    target = _attach_fact()
+    if target is None:
+        return 1
+    app_title, process_name = target
 
     # 2. Business data fields + sample record (kept out of the saved workflow)
     field_names = _ask_field_names()
@@ -502,12 +499,12 @@ def run_wizard(
     print("  STEP 4: Your Steps")
     print("------------------------------------------------------------------------")
     print("Reading the controls this window exposes to Windows UI Automation...")
-    live = _inspect_live(app_title)
+    live = _read_fact_screen()
     if live is None:
-        print("Open the app again and re-run the wizard if the window went away.")
+        print("Open FACT again and re-run the wizard if the window went away.")
         return 1
-    window, inspection = live
-    print(f"[ OK ] Detected {len(inspection.candidates)} control(s).")
+    window, inspection = live.window, live.inspection
+    print(f"[ OK ] Detected {len(inspection.candidates)} control(s) on {live.match.state_id}.")
     if len(inspection.candidates) < 3:
         print(
             "[WARN] This window exposes almost no controls. Keep it restored "
@@ -516,11 +513,16 @@ def run_wizard(
         )
 
     session = _step_session_dir()
+    #: The plan itself, in the order it will run. Everything the wizard adds -
+    #: an AI step, a designed segment, a script - goes on the end, so "add this
+    #: segment, then keep going" is simply the order things were added in.
     steps: list[dict] = []
+    #: Only for refusing the same segment twice; the plan holds its steps.
+    chosen_segments: list[str] = []
     labels: dict[str, str] = {}
     types: dict[str, str] = {name: "text" for name in field_names}
     live_values: dict[str, str] = {}
-    filled: dict[str, ResolvedTarget] = {}
+
     pause_after_click = 0.5
 
     while True:
@@ -533,21 +535,159 @@ def run_wizard(
             print("    (none yet)")
         print("  [1] Add a step")
         print("  [2] Start automation")
-        choice = _prompt("Choose 1 or 2", default="1").strip().casefold()
+        print("  [3] Add a deterministic automation (a script or designed steps)")
+        print("  [4] Add a script by path (one that is not in execution/scripts)")
+        choice = _prompt("Choose 1, 2, 3 or 4", default="1").strip().casefold()
 
         if choice.startswith("2") or choice.startswith("s"):
             if not steps:
                 print("No steps yet, so there is nothing to run.")
                 continue
-            if not any(step["action"] == "fill" for step in steps):
+            if field_names and not any(
+                step["action"] in ("fill", "run") for step in steps
+            ):
                 print(
                     "No step fills anything yet - add the step that types "
                     "the data."
                 )
                 continue
             break
+        if choice.startswith("3") or choice.startswith("det"):
+            from core.automation.scripts import (
+                DEFAULT_SCRIPT_ARGS,
+                ScriptError,
+                find_scripts,
+                get_script,
+                script_step,
+            )
+            from core.automation.segments import SegmentError, load_segments
+
+            # One menu for both halves of "deterministic": the scripts that
+            # were written, and the steps that were designed. Either one can be
+            # inserted here, and authoring simply continues after it.
+            try:
+                table = load_segments()
+            except SegmentError as exc:
+                print(f"  {exc}")
+                table = None
+            scripts = find_scripts()
+            designed = list(table.segments) if table is not None else []
+            if not scripts and not designed:
+                print("  Nothing to insert yet: a script in execution/scripts/ or a ")
+                print("  designed segment in config/segments/ shows up here.")
+                continue
+
+            choices: list[tuple[str, str]] = []
+            print()
+            print("  Deterministic automations you can insert here:")
+            for script in scripts:
+                choices.append(("script", script.id))
+                print(f"    {len(choices)}. [script] {script.describe()}")
+            for segment in designed:
+                choices.append(("steps", segment.id))
+                print(
+                    f"    {len(choices)}. [steps]  {segment.id}: "
+                    f"{len(segment.steps)} step(s) on "
+                    f"{', '.join(segment.state_ids())}"
+                )
+            picked = _prompt(
+                "  Which one (number or id, Enter to cancel)", default=""
+            ).strip()
+            if not picked:
+                continue
+            chosen = None
+            if picked.isdigit():
+                position = int(picked)
+                if 1 <= position <= len(choices):
+                    chosen = choices[position - 1]
+            else:
+                chosen = next(
+                    (item for item in choices if item[1] == picked), None
+                )
+            if chosen is None:
+                print(f"  There is nothing called {picked!r} in that list.")
+                continue
+
+            kind, name = chosen
+            if kind == "script":
+                try:
+                    entry = get_script(name)
+                except ScriptError as exc:
+                    print(f"  {exc}")
+                    continue
+                raw = _prompt(
+                    "  Arguments, space separated "
+                    "({values_file} is the values JSON)",
+                    default=" ".join(DEFAULT_SCRIPT_ARGS),
+                )
+                steps.append(script_step(entry, args=raw.split()))
+                print(
+                    f"  {name!r} runs here, after the {len(steps) - 1} step(s) "
+                    "above it. It types into the form itself and never clicks Save."
+                )
+                continue
+
+            if table is None:
+                continue
+            try:
+                segment = table.get(name)
+            except SegmentError as exc:
+                print(f"  {exc}")
+                continue
+            if name in chosen_segments:
+                print(f"  {name!r} is already in this workflow.")
+                continue
+            # Its steps join the plan here, in this order, so anything added
+            # next runs after them - which is the whole point of inserting it.
+            steps.extend(_segment_steps(segment))
+            for field in segment.fields:
+                labels.setdefault(field.name, field.field)
+                types.setdefault(field.name, field.type)
+            extra = [field.name for field in segment.fields if field.name not in values]
+            if extra:
+                print("  It types these fields; give one sample value each so the ")
+                print("  proof can run it now:")
+                values.update(_ask_sample_values(extra))
+            chosen_segments.append(name)
+            print(
+                f"  {name!r}: {len(segment.steps)} step(s) added here. Anything "
+                "you add next runs after them."
+            )
+            continue
+
+        if choice.startswith("4") or choice.startswith("scr"):
+            from core.automation.scripts import find_scripts
+
+            known = find_scripts()
+            script = _clean_path(
+                _prompt(
+                    "  Script to run at this point (path from the project root)",
+                    default=known[0].path if known else "",
+                )
+            )
+            if not script:
+                continue
+            raw_args = _prompt(
+                "  Arguments, space separated ({values_file} is the values JSON)",
+                default="{values_file}",
+            )
+            steps.append(
+                {
+                    "action": "run",
+                    "script": script,
+                    "args": raw_args.split(),
+                    "timeout_seconds": 900.0,
+                }
+            )
+            print(
+                f"  {script!r} will run here, after the {len(steps) - 1} step(s) "
+                "above it. It types into the form itself and never clicks Save."
+            )
+            continue
+
         if choice not in ("", "1", "a", "add"):
-            print("Enter 1 to add a step, or 2 to start automation.")
+            print("Enter 1 to add a step, 2 to start automation, 3 to insert a")
+            print("deterministic automation, or 4 to run a script by path.")
             continue
 
         index = len(steps) + 1
@@ -557,21 +697,21 @@ def run_wizard(
         if not instruction:
             continue
 
-        try:
-            capture = capture_window(window)
-            inspection = inspect_window(window)
-        except CaptureError as exc:
-            print(f"[WARN] {exc}")
+        # Ask the recogniser again for every step: the previous click may have
+        # closed one FACT window and opened another (Login -> Main).
+        live = _read_fact_screen(seconds=5.0)
+        if live is None:
+            print("  Get FACT back to a known screen and add the step again.")
             continue
-        except UIAError as exc:
-            print(f"[WARN] Could not read the window's controls: {exc}")
-            continue
-        window = inspection.window
+        capture, inspection, window = live.capture, live.inspection, live.window
         shot = _save_shot(capture, session, f"step-{index:02d}-before.png")
         print(f"  Screen saved: {shot}")
         # A click can open a dialog, so the control list has to come from the
         # same moment as the screenshot - not from before the earlier steps.
-        print(f"  {len(inspection.candidates)} control(s) on this screen right now.")
+        print(
+            f"  {len(inspection.candidates)} control(s) on {live.match.state_id} "
+            "right now."
+        )
 
         correction = ""
         plan: Any | None = None
@@ -612,29 +752,29 @@ def run_wizard(
                 correction = fix
                 plan = None
                 continue
-            try:
-                capture = capture_window(window)
-                inspection = inspect_window(window)
-            except (CaptureError, UIAError) as exc:
-                print(f"[WARN] {exc}")
+            live = _read_fact_screen(seconds=5.0)
+            if live is None:
+                print("  Get FACT back to a known screen and add the step again.")
                 break
-            window = inspection.window
+            capture, inspection, window = live.capture, live.inspection, live.window
             shot = _save_shot(capture, session, f"step-{index:02d}-before.png")
             print(f"  Screen saved: {shot}")
             print(
-                f"  {len(inspection.candidates)} control(s) on this screen "
-                "right now."
+                f"  {len(inspection.candidates)} control(s) on "
+                f"{live.match.state_id} right now."
             )
             plan = None
 
         if plan is None:
             continue
 
-        try:
-            inspection = inspect_window(window)
-        except UIAError as exc:
-            print(f"[WARN] Could not read the window: {exc}")
+        # The plan is about to run on the live screen, so re-resolve the window
+        # once more instead of trusting the handle from before the review.
+        live = _read_fact_screen(seconds=5.0)
+        if live is None:
+            print("  Get FACT back to a known screen and add the step again.")
             continue
+        inspection, window = live.inspection, live.window
 
         step_values = {
             key: values.get(key, "") for key in getattr(plan, "keys", ())
@@ -648,6 +788,8 @@ def run_wizard(
             types=types,
             delay=preview.safety.action_delay_seconds,
             pause_after_click=pause_after_click,
+            settle_seconds=SETTLE_SECONDS,
+            reacquire=_reacquire_fact,
         )
         for note in result.warnings:
             print(f"  note: {note}")
@@ -659,10 +801,11 @@ def run_wizard(
             )
             continue
 
-        filled.update(result.fields)
         live_values.update(step_values)
-        if plan.kind == "click":
-            steps.append({"action": "click", "button": plan.label})
+        if plan.kind in ("click", "double_click"):
+            steps.append({"action": plan.kind, "button": plan.label})
+        elif plan.kind == "key":
+            steps.append({"action": "key", "keys": plan.keypress})
         else:
             for fill in plan.fills:
                 labels.setdefault(fill.key, fill.label)
@@ -676,16 +819,20 @@ def run_wizard(
         print(f"[ OK ] Step {index} done on the live screen.")
 
     print()
-    save_button = _ask_save_button(window, inspection)
-    confirmation = _ask_confirmation()
+    # Save is not a question any more: the plan itself ends with the click that
+    # saves. The button the AI chose is taken out of the steps and becomes the
+    # save action, which the runner clicks exactly once, after the last step.
+    save_button, steps, dropped = _take_save_step(steps)
+    if dropped:
+        print(
+            f"  Save is the last step of the plan ({save_button!r}); it is clicked "
+            "once, after the last row."
+        )
+    # Every key the plan actually types, in the order it met them - including
+    # the ones a designed segment brought, which no AI step ever saw.
     field_configs = [
-        {
-            "name": name,
-            "field": labels.get(name, name),
-            "type": types.get(name, "text"),
-        }
-        for name in field_names
-        if name in labels
+        {"name": name, "field": label, "type": types.get(name, "text")}
+        for name, label in labels.items()
     ]
     output_path = (
         Path(config_path)
@@ -698,7 +845,6 @@ def run_wizard(
         save_button=save_button,
         steps=steps,
         fields=field_configs,
-        confirmation=confirmation,
         path=output_path,
     )
 
@@ -708,85 +854,54 @@ def run_wizard(
     print("=" * 72)
     for index, step in enumerate(steps, start=1):
         print(f"  {index}. {_describe_step(step)}")
-    print(f"  Save button : {save_button}")
+    print(f"  Save button : {save_button} (clicked once, at the end)")
     print(f"  Config      : {config_file}")
     print("  Safety      : Alt+T (Stop) | Alt+P (Pause) | Alt+R (Resume)")
     print("=" * 72)
+    print("  The workflow is written but not yet proved: proving it runs the whole")
+    print("  plan and saves one record. Registering below does that.")
 
-    try:
-        config = load_config(str(config_file))
-    except ConfigError as exc:
-        print(f"[WARN] {exc}")
-        return 1
-
+    # Save it as a resumable automation too. The proof pass runs the steps once
+    # more without clicking Save, which is what teaches each step its screen.
     print()
-    print("Saving the record that is already filled...")
-    try:
-        save = save_and_verify(
-            config=config,
-            window=window,
-            inspection=inspection,
-            fields=filled,
+    if _prompt_yes_no(
+        "Register this as a reusable automation now? (it runs the whole plan "
+        "and saves one record)",
+        default_yes=False,
+    ):
+        from wizard.register import describe_checkpoints, register_automation
+
+        name = _prompt("  Automation name", default="fact_automation").strip()
+        print()
+        result = register_automation(
+            name=name,
+            config_path=config_file,
             values=live_values,
-            record_label="record",
-            screenshot_dir=session,
+            # A ``run`` step in the plan is proved for real, so it gets the
+            # same values file every later run will be given.
+            values_file=values_path,
         )
-    except Exception as exc:  # a save failure must not lose the workflow
-        print(f"[WARN] The first save could not be completed: {exc}")
-        return 1
-
-    if not save:
-        print(
-            "The first record was not saved ("
-            + (save.outcome.reason or "no confirmation")
-            + "), so the workflow was written but not proven."
-        )
-        return 1
-
-    print(f"  save confirmation: {save.outcome.outcome} ({save.outcome.reason})")
-
-    verifier = _ask_save_check()
-    if verifier == "none":
-        print("  Save check: none - every Save counts as done")
-        footprint: list[str] = []
-    else:
-        footprint = decide_footprint(
-            save.before,
-            save.after,
-            live_values,
-            list(live_values),
-        )
-        if footprint:
+        if result.automation is not None:
+            print("  Checkpoints proved by the run:")
+            for line in describe_checkpoints(result.automation):
+                print(f"    {line}")
+        if result.path is not None:
+            print(f"  Automation saved: {result.path}")
+        if result.launcher is not None:
+            print(f"  Launcher:         {result.launcher}")
+        if result.ok:
             print(
-                "  Save evidence: "
-                + ", ".join(
-                    f"{live_values.get(key, '')!r} for {key!r}"
-                    for key in footprint
+                f"  Run it with: python cli.py automation run {name} "
+                "--values <values.json>"
+            )
+            if result.launcher is not None:
+                print(
+                    "  or double-click the launcher, with a values.json beside it"
                 )
-                + " is now on the screen."
-            )
         else:
-            footprint = list(live_values)[:1]
-            print(
-                "  No new value was visible after Save, so later saves are "
-                "checked with the first filled value."
-            )
-        if verifier == "text" and not config.confirmation.success_pattern:
-            print(
-                "  No success text was given earlier, so AI has nothing to match; "
-                "checking the screen locally instead."
-            )
-            verifier = "row"
-        print(
-            "  Save check: "
-            + ("AI reads each screen" if verifier == "text" else "local window text")
-        )
+            print(f"  Not registered: {result.message}")
+            print("  The workflow itself is saved and can still be run.")
 
-    data = json.loads(config_file.read_text(encoding="utf-8"))
-    data.setdefault("confirmation", {})["verifier"] = verifier
-    data["confirmation"]["footprint"] = list(footprint)
-    config_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    print(f"  Workflow saved: {config_file}")
     return 0
 
 
