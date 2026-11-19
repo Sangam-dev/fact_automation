@@ -49,6 +49,9 @@ class AppConfig(BaseModel):
     title_contains: str = ""
     process_name: str | None = None
     require_foreground: bool = True
+    # Keep the target app in the always-on-top band, above our chat window.
+    # Every window the app owns is pinned, including ones it opens later, so
+    # pinning never buries a form the app itself puts in front.
     pin_window: bool = True
 
     @model_validator(mode="after")
@@ -105,12 +108,27 @@ class WorkflowConfig(BaseModel):
     pause_after_click_seconds: float = Field(default=0.5, ge=0)
 
 
+#: The model used when neither ``.env`` nor the config file names one.
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+
+
+def get_gemini_model() -> str:
+    """The model to use: ``GEMINI_MODEL`` from the environment, else the default.
+
+    Read where the model is *chosen*, not where it is used, so a config that is
+    generated or proved records the model that did the work. Switching models -
+    a quota change, a cheaper one - is then one line in ``.env``, not an edit to
+    every saved automation.
+    """
+    return os.getenv("GEMINI_MODEL", "").strip() or DEFAULT_GEMINI_MODEL
+
+
 class GeminiConfig(BaseModel):
     """Gemini model and cost guards."""
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str = "gemini-3.6-flash"
+    model: str = Field(default_factory=get_gemini_model)
     max_image_dimension: int = Field(default=1600, ge=200)
     timeout_seconds: int = Field(default=60, ge=5)
     max_retries: int = Field(default=3, ge=0)
@@ -336,6 +354,14 @@ def load_config(path: str | Path) -> AgentConfig:
         raise ConfigError(f"invalid JSON in {config_path}: {exc}") from exc
 
     try:
-        return AgentConfig.model_validate(data)
+        config = AgentConfig.model_validate(data)
     except Exception as exc:  # pydantic ValidationError and nested ValueErrors
         raise ConfigError(f"invalid config {config_path}: {exc}") from exc
+
+    # The environment outranks the file. A saved config keeps the model it was
+    # written with, which is right for the record but wrong as a policy: it
+    # would pin every automation to a model that may be exhausted by noon.
+    override = os.getenv("GEMINI_MODEL", "").strip()
+    if override:
+        config.gemini.model = override
+    return config

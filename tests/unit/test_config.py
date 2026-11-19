@@ -12,6 +12,7 @@ from core.config import (
     AgentConfig,
     ConfigError,
     ConfirmationConfig,
+    DEFAULT_GEMINI_MODEL,
     load_config,
     project_root,
     resolve_path,
@@ -24,7 +25,12 @@ def _write(tmp_path: Path, data: dict) -> Path:
     return path
 
 
-def test_valid_config_loads(valid_config: dict, tmp_path: Path) -> None:
+def test_valid_config_loads(
+    valid_config: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The file names the model; a GEMINI_MODEL exported on this machine must
+    # not decide what this test sees.
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
     config = load_config(_write(tmp_path, valid_config))
 
     assert isinstance(config, AgentConfig)
@@ -32,6 +38,48 @@ def test_valid_config_loads(valid_config: dict, tmp_path: Path) -> None:
     assert config.workflow is None
     assert len(config.fields) == 2
     assert config.gemini.model == "gemini-3.6-flash"
+
+
+def test_the_environment_outranks_the_config_file(
+    valid_config: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+
+    config = load_config(_write(tmp_path, valid_config))
+
+    assert config.gemini.model == "gemini-3.5-flash-lite"
+
+
+def test_a_config_without_a_model_follows_the_environment(
+    valid_config: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    valid_config.pop("gemini")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+
+    config = load_config(_write(tmp_path, valid_config))
+
+    assert config.gemini.model == "gemini-3.5-flash-lite"
+
+
+def test_an_empty_model_override_is_ignored(
+    valid_config: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GEMINI_MODEL", "   ")
+
+    config = load_config(_write(tmp_path, valid_config))
+
+    assert config.gemini.model == "gemini-3.6-flash"
+
+
+def test_the_default_model_applies_when_nothing_names_one(
+    valid_config: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    valid_config.pop("gemini")
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+
+    config = load_config(_write(tmp_path, valid_config))
+
+    assert config.gemini.model == DEFAULT_GEMINI_MODEL
 
 
 def test_a_config_with_a_workflow_loads(valid_config: dict, tmp_path: Path) -> None:
@@ -49,11 +97,15 @@ def test_a_config_with_a_workflow_loads(valid_config: dict, tmp_path: Path) -> N
 
 
 def test_the_example_config_is_valid() -> None:
+    # The example is a living file: button names and the verifier are edited to
+    # match the app as workflows get proved. What must hold is that it loads and
+    # still describes a plan someone can run.
     config = load_config("config/examples/workflow.example.json")
 
     assert config.workflow is not None
-    assert config.actions.save_button == "Save Record"
-    assert config.confirmation.verifier == "row"
+    assert config.workflow.steps, "the example must still show a step plan"
+    assert config.actions.save_button
+    assert config.confirmation.verifier in {"row", "text"}
 
 
 def test_missing_config_file_raises(tmp_path: Path) -> None:
