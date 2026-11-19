@@ -1,0 +1,107 @@
+{
+  "schema": "states/1",
+  "process": "FACTERPNG.exe",
+  "generated_from": "scripts/snapshots",
+  "generated_at": "2026-11-19T11:18:11",
+  "states": [
+    {
+      "id": "01_login",
+      "label": "01_login",
+      "match": {
+        "auto_id": "frmLogin",
+        "title_contains": "Welcome to FACT ERP.NG",
+        "require": [],
+        "forbid": []
+      },
+      "provisional": true,
+      "samples": 1,
+      "control_count": 61
+    },
+    {
+      "id": "02_welcome",
+      "label": "02_welcome",
+      "match": {
+        "auto_id": "frmSelectcompany",
+        "title_contains": "FACT ERP.NG - Company Open",
+        "require": [],
+        "forbid": []
+      },
+      "provisional": true,
+      "samples": 1,
+      "control_count": 62
+    },
+    {
+      "id": "03_entry",
+      "label": "03_entry",
+      "match": {
+        "auto_id": "frmMenu",
+        "title_is": "FACT ERP.NG",
+        "require": [],
+        "forbid": []
+      },
+      "provisional": true,
+      "samples": 1,
+      "control_count": 140
+    },
+    {
+      "id": "04_view",
+      "label": "04_view",
+      "match": {
+        "auto_id": "40200",
+        "title_ends_with": "View",
+        "require": [
+          {
+            "auto_id": "HledAdd"
+          },
+          {
+            "auto_id": "btnPause"
+          },
+          {
+            "auto_id": "HledClose"
+          }
+        ],
+        "forbid": [
+          {
+            "auto_id": "cboGST"
+          },
+          {
+            "auto_id": "peClass"
+          }
+        ]
+      },
+      "provisional": true,
+      "samples": 1,
+      "control_count": 149
+    },
+    {
+      "id": "05_add",
+      "label": "05_add",
+      "match": {
+        "auto_id": "40200",
+        "title_ends_with": "Add",
+        "require": [
+          {
+            "auto_id": "cboGST"
+          },
+          {
+            "auto_id": "peClass"
+          },
+          {
+            "auto_id": "peOwner"
+          }
+        ],
+        "forbid": [
+          {
+            "auto_id": "HledAdd"
+          },
+          {
+            "auto_id": "btnPause"
+          }
+        ]
+      },
+      "provisional": true,
+      "samples": 1,
+      "control_count": 266
+    }
+  ]
+}
