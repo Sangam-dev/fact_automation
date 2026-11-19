@@ -16,7 +16,6 @@ import re
 from typing import Any, Sequence
 
 from desktop.uia.uia import UIAInspection
-from desktop.types import UIACandidate
 from execution.verification.controls import EDITABLE_CONTROL_TYPES
 from execution.verification.confirmation import (
     CONFIRMED,

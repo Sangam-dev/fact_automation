@@ -47,7 +47,6 @@ SW_RESTORE = 9
 DIALOG_ID = "frmMessageBox"
 DIALOG_DETAIL_ID = "lblDetail"
 #: never clicked: "does not exist / Add New?" is always declined
-DIALOG_YES_ID = "btnYes2"
 DIALOG_NO_ID = "btnNo2"
 DIALOG_OK_ID = "btnOk"  # informational warnings, e.g. "No previous Selling Rate Found"
 
