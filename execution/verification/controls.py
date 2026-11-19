@@ -12,12 +12,9 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageChops
 
-from desktop.types import Rect
+from desktop.types import EDITABLE_CONTROL_TYPES, Rect
 from desktop.uia.uia import UIAError, UIAInspection
 from desktop.windows.coordinates import rect_within
-
-_EDITABLE_TYPES = {"Edit", "Document", "Spinner"}
-EDITABLE_CONTROL_TYPES = frozenset(_EDITABLE_TYPES)
 
 
 @dataclass(frozen=True)
@@ -55,8 +52,23 @@ def _normalise(text: str) -> str:
     return " ".join(str(text).split())
 
 
-def _same_name(left: str, right: str) -> bool:
-    return _normalise(left).casefold() == _normalise(right).casefold()
+def _match_key(text: str) -> str:
+    return " ".join(str(text).replace("&", " ").split()).casefold()
+
+
+def _matches(candidate, label: str) -> bool:
+    """True when *label* names the control by caption, label or automation id."""
+    wanted = _match_key(label)
+    if not wanted:
+        return True
+    name = str(getattr(candidate, "name", "") or "")
+    automation_id = str(getattr(candidate, "automation_id", "") or "")
+    display = str(getattr(candidate, "label", "") or name)
+    return wanted in {
+        _match_key(name),
+        _match_key(automation_id),
+        _match_key(display),
+    }
 
 
 def _inside(rect: Rect, window: Rect) -> bool:
@@ -79,7 +91,7 @@ def _pick_candidate(
     candidate = by_id.get(candidate_id) if candidate_id else None
     warning: str | None = None
     if candidate is not None:
-        name_ok = not label or _same_name(candidate.name, label)
+        name_ok = _matches(candidate, label)
         if name_ok and candidate.control_type in control_types and _inside(
             candidate.rect, window
         ):
@@ -101,7 +113,7 @@ def _pick_candidate(
     for item in inspection.candidates:
         if item.control_type not in control_types:
             continue
-        if label and not _same_name(item.name, label):
+        if not _matches(item, label):
             continue
         if not _inside(item.rect, window):
             continue

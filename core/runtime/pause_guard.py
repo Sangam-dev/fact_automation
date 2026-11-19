@@ -34,6 +34,15 @@ class PauseGuard:
         self._sleep = sleep
         self._pauses = getattr(controller, "pause_count", 0)
 
+    def set_window(self, window: WindowInfo | None) -> None:
+        """Point the guard at the window the run is using now.
+
+        FACT changes top-level windows between screens, so after a click the
+        old handle may be gone; a pause/resume must bring the *current* window
+        back instead of failing on a dead one.
+        """
+        self._window = window
+
     def check(self, message: str) -> bool:
         """Block while paused and raise when stopped.
 

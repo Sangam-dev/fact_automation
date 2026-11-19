@@ -20,19 +20,19 @@ from core.config import AgentConfig, project_root
 from core.runtime.errors import RunnerAborted, RunnerError
 from core.runtime.pause_guard import PauseGuard
 from core.safety.controller import SafetyController
-from desktop.screenshots.capture import Capture, capture_window
+from desktop.screenshots.capture import capture_window
+from desktop.state.fact import FactError, attach_target
 from desktop.types import WindowInfo
 from desktop.uia.uia import UIAError, UIAInspection, inspect_window
-from desktop.windows.window import WindowError, attach_window
+from desktop.windows.window import WindowError
 from execution.actions.engine import (
     BUTTON_CONTROL_TYPES,
-    PlanResult,
+    SETTLE_SECONDS,
     add_button_labels,
     clear_open_form,
     execute_form_steps,
     read_save_window,
     save_screenshot,
-    verify_save,
 )
 from execution.verification.confirmation import (
     CONFIRMED,
@@ -48,7 +48,6 @@ from execution.verification.controls import (
 )
 from execution.verification.evidence import (
     check_row_appeared,
-    decide_footprint,
     footprint_values,
 )
 from execution.verification.search import find_appended_row
@@ -103,6 +102,80 @@ def _format_value(value: Any) -> str:
     return str(value).strip()
 
 
+#: The one key in a values file that is not a field: the line rows.
+ROWS_KEY = "rows"
+#: The same document, written the way the deterministic fillers read it.
+LINES_KEY = "lines"
+#: The header, when the document nests it instead of flattening it.
+HEADER_KEY = "header"
+
+#: Keys that describe the document rather than a field on the form.
+ENVELOPE_KEYS = (ROWS_KEY, LINES_KEY, HEADER_KEY)
+
+
+def split_rows(
+    data: dict[str, Any], *, source: str = "values"
+) -> tuple[dict[str, str], list[dict[str, str]]]:
+    """Separate one document's header values from its line rows.
+
+    A values file describes *one document*: the fields typed once, plus an
+    optional row list typed once per line. The document is saved once, at the
+    end - not once per row.
+
+    It can be written two ways, and both mean the same thing: flat
+    (``{"customer": "Ram", "rows": [...]}``) or in the shape the
+    deterministic fillers already read (``{"header": {...}, "lines":
+    [...]}``). One file then serves the endpoint, the plan and the script, and
+    none of them has to be translated for the others.
+    """
+    row_key = ROWS_KEY if ROWS_KEY in data else LINES_KEY
+    raw = data.get(row_key)
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list):
+        raise RunnerError(
+            f'{source}: "{row_key}" must be a list of objects, one per row'
+        )
+    rows: list[dict[str, str]] = []
+    for index, row in enumerate(raw, start=1):
+        if not isinstance(row, dict):
+            raise RunnerError(
+                f"{source}: row {index} must be an object of field -> value"
+            )
+        rows.append({str(key): _format_value(value) for key, value in row.items()})
+
+    nested = data.get(HEADER_KEY)
+    if nested is not None and not isinstance(nested, dict):
+        raise RunnerError(
+            f'{source}: "{HEADER_KEY}" must be an object of field -> value'
+        )
+    fields = nested if isinstance(nested, dict) else data
+    header = {
+        str(key): _format_value(value)
+        for key, value in fields.items()
+        if key not in ENVELOPE_KEYS
+    }
+    return header, rows
+
+
+def load_values_with_rows(
+    path: str | Path,
+) -> tuple[dict[str, str], list[dict[str, str]]]:
+    """Load one document: its header values and its line rows."""
+    file_path = Path(path)
+    if not file_path.is_absolute():
+        file_path = project_root() / file_path
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RunnerError(f"cannot read values {file_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RunnerError(
+            f"values {file_path} must contain a JSON object of field -> value"
+        )
+    return split_rows(data, source=f"values {file_path}")
+
+
 def load_values(path: str | Path) -> dict[str, str]:
     """Load one record from a JSON object (``{"field": value}``)."""
     file_path = Path(path)
@@ -116,7 +189,8 @@ def load_values(path: str | Path) -> dict[str, str]:
         raise RunnerError(
             f"values {file_path} must contain a JSON object of field -> value"
         )
-    return {str(key): _format_value(value) for key, value in data.items()}
+    header, _ = split_rows(data, source=f"values {file_path}")
+    return header
 
 
 def _screenshot_dir(value: str | Path | None) -> Path:
@@ -299,9 +373,9 @@ def run_workflow(
             len(workflow.steps),
         )
         try:
-            window = attach_window(config.app)
+            window = attach_target(config.app)
             inspection = inspect_window(window)
-        except (WindowError, UIAError) as exc:
+        except (FactError, WindowError, UIAError) as exc:
             raise RunnerError(f"cannot read the target window: {exc}") from exc
 
         if attempt > 1 and not clear_open_form(
@@ -319,6 +393,14 @@ def run_workflow(
                 screenshots=tuple(screenshots),
             )
 
+        def refresh() -> tuple[WindowInfo, UIAInspection]:
+            """Re-attach after a click; FACT may have replaced the window."""
+            try:
+                fresh_window = attach_target(config.app)
+                return fresh_window, inspect_window(fresh_window)
+            except (FactError, WindowError, UIAError) as exc:
+                raise UIAError(str(exc)) from exc
+
         plan = execute_form_steps(
             workflow.steps,
             values,
@@ -330,6 +412,8 @@ def run_workflow(
             delay=config.safety.action_delay_seconds,
             pause_after_click=workflow.pause_after_click_seconds,
             require_foreground=config.app.require_foreground,
+            settle_seconds=SETTLE_SECONDS,
+            reacquire=refresh,
             sleep=sleep,
             output=output,
         )
@@ -362,6 +446,11 @@ def run_workflow(
                 )
         if on_before_save is not None:
             on_before_save(record_label)
+
+        # The last click may have moved the plan to a new FACT window; Save is
+        # on the screen the plan ended on, not the one it started from.
+        if getattr(plan.inspection, "window", None) is not None:
+            window = plan.inspection.window
 
         save = save_and_verify(
             config=config,

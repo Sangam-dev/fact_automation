@@ -43,6 +43,7 @@ class FakeCandidate:
     name: str
     control_type: str
     rect: Rect
+    automation_id: str = ""
 
 
 class FakeInspection:
@@ -183,6 +184,66 @@ def test_a_click_is_followed_by_a_fresh_inspection(monkeypatch) -> None:
     assert calls["pastes"] == ["500"]
     assert len(calls["clicks"]) == 2
     assert inspected == [1]
+
+
+def test_a_click_can_hand_the_plan_to_a_new_window(monkeypatch) -> None:
+    calls = _stub_input(monkeypatch)
+    before = FakeInspection([_button("Login")])
+    after = FakeInspection([_field("Amount")], values={"e1": "500"})
+    refreshed: list[int] = []
+
+    def reacquire():
+        refreshed.append(1)
+        return _window(), after
+
+    monkeypatch.setattr(
+        form_steps,
+        "inspect_window",
+        lambda _window: pytest.fail("a stale window must not be re-read"),
+    )
+
+    plan = execute_form_steps(
+        [
+            ClickStep(action="click", button="Login"),
+            FillStep(action="fill", key="Amount"),
+        ],
+        {"Amount": "500"},
+        window=_window(),
+        inspection=before,
+        labels={"Amount": "Amount"},
+        types={"Amount": "number"},
+        reacquire=reacquire,
+    )
+
+    assert plan.ok, plan.problems
+    assert plan.steps_run == 2
+    assert refreshed == [1]
+    assert plan.inspection is after
+
+
+def test_a_pane_button_is_clicked_by_its_automation_id(monkeypatch) -> None:
+    calls = _stub_input(monkeypatch)
+    monkeypatch.setattr(form_steps, "inspect_window", lambda _w: FakeInspection([]))
+    image_button = FakeCandidate(
+        candidate_id="b1",
+        name="System.Drawing.Bitmap",
+        control_type="Pane",
+        rect=Rect(200, 200, 260, 240),
+        automation_id="btnLogin",
+    )
+
+    plan = execute_form_steps(
+        [ClickStep(action="click", button="btnLogin")],
+        {},
+        window=_window(),
+        inspection=FakeInspection([image_button]),
+        labels={},
+        types={},
+    )
+
+    assert plan.ok, plan.problems
+    assert plan.steps_run == 1
+    assert calls["clicks"] == [(230, 220)]
 
 
 def test_a_fill_is_read_back_from_the_inspection_that_resolved_it(
