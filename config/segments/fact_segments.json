@@ -1,0 +1,170 @@
+{
+  "schema": "segments/1",
+  "generated_from": "config/forms/sale_order.json + execution/forms/sale_order_plan.py",
+  "generated_at": "2026-11-19T12:13:34",
+  "segments": [
+    {
+      "id": "sale_order.header",
+      "title": "Sale Order header",
+      "summary": "the designed header fields, in the order they are entered",
+      "source": "execution/forms/sale_order_plan.py (SALE_ORDER.header) + config/forms/sale_order.json",
+      "fields": [
+        {
+          "name": "document_scheme",
+          "field": "Document Numbering Scheme",
+          "type": "text"
+        },
+        {
+          "name": "order_date",
+          "field": "Date",
+          "type": "text"
+        },
+        {
+          "name": "proforma_no",
+          "field": "Proforma Invoice / Quotation No",
+          "type": "text"
+        },
+        {
+          "name": "customer_order_no",
+          "field": "Customer Order Number",
+          "type": "text"
+        },
+        {
+          "name": "expected_delivery_date",
+          "field": "Expected Delivery Date",
+          "type": "text"
+        },
+        {
+          "name": "currency_code",
+          "field": "Currency",
+          "type": "text"
+        },
+        {
+          "name": "customer_code",
+          "field": "Customer",
+          "type": "text"
+        },
+        {
+          "name": "salesman_code",
+          "field": "Salesman (Agent)",
+          "type": "text"
+        },
+        {
+          "name": "document_class",
+          "field": "Document Class",
+          "type": "text"
+        }
+      ],
+      "steps": [
+        {
+          "id": "01-fill-document-scheme",
+          "action": "fill",
+          "key": "document_scheme",
+          "field": "Document Numbering Scheme",
+          "optional": false,
+          "checkpoint": {
+            "state": "05_add",
+            "resume": "restart",
+            "note": ""
+          }
+        },
+        {
+          "id": "02-fill-order-date",
+          "action": "fill",
+          "key": "order_date",
+          "field": "Date",
+          "optional": false,
+          "checkpoint": {
+            "state": "05_add",
+            "resume": "restart",
+            "note": ""
+          }
+        },
+        {
+          "id": "03-fill-proforma-no",
+          "action": "fill",
+          "key": "proforma_no",
+          "field": "Proforma Invoice / Quotation No",
+          "optional": false,
+          "checkpoint": {
+            "state": "05_add",
+            "resume": "restart",
+            "note": ""
+          }
+        },
+        {
+          "id": "04-fill-customer-order-no",
+          "action": "fill",
+          "key": "customer_order_no",
+          "field": "Customer Order Number",
+          "optional": false,
+          "checkpoint": {
+            "state": "05_add",
+            "resume": "restart",
+            "note": ""
+          }
+        },
+        {
+          "id": "05-fill-expected-delivery-date",
+          "action": "fill",
+          "key": "expected_delivery_date",
+          "field": "Expected Delivery Date",
+          "optional": false,
+          "checkpoint": {
+            "state": "05_add",
+            "resume": "restart",
+            "note": ""
+          }
+        },
+        {
+          "id": "06-fill-currency-code",
+          "action": "fill",
+          "key": "currency_code",
+          "field": "Currency",
+          "optional": false,
+          "checkpoint": {
+            "state": "05_add",
+            "resume": "restart",
+            "note": ""
+          }
+        },
+        {
+          "id": "07-fill-customer-code",
+          "action": "fill",
+          "key": "customer_code",
+          "field": "Customer",
+          "optional": false,
+          "checkpoint": {
+            "state": "05_add",
+            "resume": "restart",
+            "note": ""
+          }
+        },
+        {
+          "id": "08-fill-salesman-code",
+          "action": "fill",
+          "key": "salesman_code",
+          "field": "Salesman (Agent)",
+          "optional": false,
+          "checkpoint": {
+            "state": "05_add",
+            "resume": "restart",
+            "note": ""
+          }
+        },
+        {
+          "id": "09-fill-document-class",
+          "action": "fill",
+          "key": "document_class",
+          "field": "Document Class",
+          "optional": false,
+          "checkpoint": {
+            "state": "05_add",
+            "resume": "restart",
+            "note": ""
+          }
+        }
+      ]
+    }
+  ]
+}
