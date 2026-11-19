@@ -1,0 +1,30 @@
+{
+  "form": "sale_order",
+  "header": {
+    "document_scheme": "SALES ORDER 2082/83",
+    "order_date": "2083/03/32",
+    "currency_code": "NPR",
+    "customer_code": "CE-CUS2542",
+    "salesman_code": "1534",
+    "document_class": "R",
+    "proforma_no": "TEST",
+    "customer_order_no": "2222",
+    "expected_delivery_date": ""
+  },
+  "lines": [
+    {
+      "product_code": "BRM-003",
+      "product_description": "POLY HR SARBOTTAM BLUE",
+      "quantity": 1000,
+      "rate": 100,
+      "document_class": "R"
+    },
+    {
+      "product_code": "BRAND- 14",
+      "product_description": "5.1 Sound System + Woofer",
+      "quantity": 299,
+      "rate": 29,
+      "document_class": "R"
+    }
+  ]
+}

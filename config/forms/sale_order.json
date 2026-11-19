@@ -1,0 +1,1259 @@
+{
+  "schema": "form-map/1",
+  "form_id": "sale_order",
+  "title_contains": "Sale Order",
+  "process": "FACTERPNG.exe",
+  "window_automation_id": "40200",
+  "status_text": {
+    "key": "status",
+    "label": "Checking Level",
+    "automation_id": "txtMemoStatus",
+    "kind": "readonly",
+    "required": false,
+    "write": "type",
+    "commit": "tab",
+    "resolved": {
+      "first_part": {
+        "capture": "first_part",
+        "path": "0/0/0/0/1/0/0/22",
+        "control_type": "Edit",
+        "inner_path": "0/0/0/0/1/0/0/22",
+        "writable": true,
+        "enabled": true,
+        "value": "DRAFT",
+        "rect": {
+          "left": 253,
+          "top": 98,
+          "right": 1553,
+          "bottom": 123
+        }
+      },
+      "second_part": {
+        "capture": "second_part",
+        "path": "0/0/0/0/1/0/0/22",
+        "control_type": "Edit",
+        "inner_path": "0/0/0/0/1/0/0/22",
+        "writable": true,
+        "enabled": true,
+        "value": "DRAFT",
+        "rect": {
+          "left": 253,
+          "top": 98,
+          "right": 1553,
+          "bottom": 123
+        }
+      }
+    }
+  },
+  "header": [
+    {
+      "key": "document_scheme",
+      "label": "Document Numbering Scheme",
+      "automation_id": "peDocScheme",
+      "kind": "lookup",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/19",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/19",
+          "writable": true,
+          "enabled": true,
+          "value": "SALES ORDER 2082/83 [<color=red>Date Range</color> = 2082/04/01 to 2083/03/32]",
+          "rect": {
+            "left": 253,
+            "top": 129,
+            "right": 1553,
+            "bottom": 154
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/19",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/19",
+          "writable": true,
+          "enabled": true,
+          "value": "SALES ORDER 2082/83 [<color=red>Date Range</color> = 2082/04/01 to 2083/03/32]",
+          "rect": {
+            "left": 253,
+            "top": 129,
+            "right": 1553,
+            "bottom": 154
+          }
+        }
+      }
+    },
+    {
+      "key": "order_number",
+      "label": "Order Number",
+      "automation_id": "TxtBody",
+      "kind": "readonly",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/3/0/0",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/3/0/0",
+          "writable": true,
+          "enabled": true,
+          "value": "AUTOMATIC",
+          "rect": {
+            "left": 253,
+            "top": 159,
+            "right": 431,
+            "bottom": 184
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/3/0/0",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/3/0/0",
+          "writable": true,
+          "enabled": true,
+          "value": "AUTOMATIC",
+          "rect": {
+            "left": 253,
+            "top": 159,
+            "right": 431,
+            "bottom": 184
+          }
+        }
+      }
+    },
+    {
+      "key": "order_date",
+      "label": "Date",
+      "automation_id": "deOa_date",
+      "kind": "date",
+      "required": true,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/2",
+          "control_type": "Pane",
+          "inner_path": "0/0/0/0/1/0/0/2/0/0",
+          "writable": true,
+          "enabled": true,
+          "value": "2083/03/32",
+          "rect": {
+            "left": 516,
+            "top": 159,
+            "right": 642,
+            "bottom": 184
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/2",
+          "control_type": "Pane",
+          "inner_path": "0/0/0/0/1/0/0/2/0/0",
+          "writable": true,
+          "enabled": true,
+          "value": "2083/03/32",
+          "rect": {
+            "left": 516,
+            "top": 159,
+            "right": 642,
+            "bottom": 184
+          }
+        }
+      }
+    },
+    {
+      "key": "proforma_no",
+      "label": "Proforma Invoice / Quotation No",
+      "automation_id": "pePro_no",
+      "kind": "lookup",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/18",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/18/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 253,
+            "top": 190,
+            "right": 431,
+            "bottom": 215
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/18",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/18/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 253,
+            "top": 190,
+            "right": 431,
+            "bottom": 215
+          }
+        }
+      }
+    },
+    {
+      "key": "proforma_date",
+      "label": "Proforma Date",
+      "automation_id": "deProf_dt",
+      "kind": "date",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/17",
+          "control_type": "Pane",
+          "inner_path": "0/0/0/0/1/0/0/17/0",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 516,
+            "top": 190,
+            "right": 642,
+            "bottom": 215
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/17",
+          "control_type": "Pane",
+          "inner_path": "0/0/0/0/1/0/0/17/0",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 516,
+            "top": 190,
+            "right": 642,
+            "bottom": 215
+          }
+        }
+      }
+    },
+    {
+      "key": "customer_order_no",
+      "label": "Customer Order Number",
+      "automation_id": "peCustOrd_no",
+      "kind": "text",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/12",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/12/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 253,
+            "top": 220,
+            "right": 431,
+            "bottom": 245
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/12",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/12/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 253,
+            "top": 220,
+            "right": 431,
+            "bottom": 245
+          }
+        }
+      }
+    },
+    {
+      "key": "customer_order_date",
+      "label": "Customer Order Date",
+      "automation_id": "deCustOrd_dt",
+      "kind": "date",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/1",
+          "control_type": "Pane",
+          "inner_path": "0/0/0/0/1/0/0/1/0",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 516,
+            "top": 220,
+            "right": 642,
+            "bottom": 245
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/1",
+          "control_type": "Pane",
+          "inner_path": "0/0/0/0/1/0/0/1/0",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 516,
+            "top": 220,
+            "right": 642,
+            "bottom": 245
+          }
+        }
+      }
+    },
+    {
+      "key": "expected_delivery_date",
+      "label": "Expected Delivery Date",
+      "automation_id": "deEDD",
+      "kind": "date",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/0",
+          "control_type": "Pane",
+          "inner_path": "0/0/0/0/1/0/0/0/0/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 829,
+            "top": 220,
+            "right": 954,
+            "bottom": 245
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/0",
+          "control_type": "Pane",
+          "inner_path": "0/0/0/0/1/0/0/0/0/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 829,
+            "top": 220,
+            "right": 954,
+            "bottom": 245
+          }
+        }
+      }
+    },
+    {
+      "key": "currency_code",
+      "label": "Currency",
+      "automation_id": "peCurr_desc",
+      "kind": "lookup",
+      "required": true,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/14",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/14/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 253,
+            "top": 250,
+            "right": 431,
+            "bottom": 275
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/14",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/14/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 253,
+            "top": 250,
+            "right": 431,
+            "bottom": 275
+          }
+        }
+      }
+    },
+    {
+      "key": "currency_name",
+      "label": "Currency name",
+      "automation_id": "TxtCurrdescript",
+      "kind": "derived",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/13",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/13",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 435,
+            "top": 250,
+            "right": 643,
+            "bottom": 275
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/13",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/13",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 435,
+            "top": 250,
+            "right": 643,
+            "bottom": 275
+          }
+        }
+      }
+    },
+    {
+      "key": "exchange_rate",
+      "label": "Exchange Rate",
+      "automation_id": "txtCurr_rate",
+      "kind": "derived",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/11",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/11",
+          "writable": true,
+          "enabled": false,
+          "value": "1.00000000000",
+          "rect": {
+            "left": 771,
+            "top": 250,
+            "right": 1211,
+            "bottom": 275
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/11",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/11",
+          "writable": true,
+          "enabled": false,
+          "value": "1.00000000000",
+          "rect": {
+            "left": 771,
+            "top": 250,
+            "right": 1211,
+            "bottom": 275
+          }
+        }
+      }
+    },
+    {
+      "key": "customer_code",
+      "label": "Customer",
+      "automation_id": "peCustcode",
+      "kind": "lookup",
+      "required": true,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/16",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/16/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 253,
+            "top": 280,
+            "right": 431,
+            "bottom": 305
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/16",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/16/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 253,
+            "top": 280,
+            "right": 431,
+            "bottom": 305
+          }
+        }
+      }
+    },
+    {
+      "key": "customer_name",
+      "label": "Customer name",
+      "automation_id": "txtCustname",
+      "kind": "derived",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/15",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/15",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 435,
+            "top": 280,
+            "right": 1211,
+            "bottom": 305
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/15",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/15",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 435,
+            "top": 280,
+            "right": 1211,
+            "bottom": 305
+          }
+        }
+      }
+    },
+    {
+      "key": "salesman_code",
+      "label": "Salesman (Agent)",
+      "automation_id": "peAgentcode",
+      "kind": "lookup",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/10",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/10/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 253,
+            "top": 310,
+            "right": 431,
+            "bottom": 335
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/10",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/10/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 253,
+            "top": 310,
+            "right": 431,
+            "bottom": 335
+          }
+        }
+      }
+    },
+    {
+      "key": "salesman_name",
+      "label": "Salesman name",
+      "automation_id": "txtAgentname",
+      "kind": "derived",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/7",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/7",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 435,
+            "top": 310,
+            "right": 1211,
+            "bottom": 335
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/7",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/7",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 435,
+            "top": 310,
+            "right": 1211,
+            "bottom": 335
+          }
+        }
+      }
+    },
+    {
+      "key": "document_class",
+      "label": "Document Class",
+      "automation_id": "peClass",
+      "kind": "lookup",
+      "required": true,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/6",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/6/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 253,
+            "top": 340,
+            "right": 431,
+            "bottom": 365
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/6",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/6/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 253,
+            "top": 340,
+            "right": 431,
+            "bottom": 365
+          }
+        }
+      }
+    },
+    {
+      "key": "document_class_description",
+      "label": "Document Class description",
+      "automation_id": "txtClassDesc",
+      "kind": "derived",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/4",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/4",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 435,
+            "top": 340,
+            "right": 1553,
+            "bottom": 365
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/4",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/4",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 435,
+            "top": 340,
+            "right": 1553,
+            "bottom": 365
+          }
+        }
+      }
+    },
+    {
+      "key": "account_id",
+      "label": "Account ID",
+      "automation_id": "peAccountID",
+      "kind": "lookup",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/8",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/8/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 1373,
+            "top": 280,
+            "right": 1553,
+            "bottom": 305
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/8",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/8/0",
+          "writable": true,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 1373,
+            "top": 280,
+            "right": 1553,
+            "bottom": 305
+          }
+        }
+      }
+    },
+    {
+      "key": "owner",
+      "label": "Owner",
+      "automation_id": "peOwner",
+      "kind": "derived",
+      "required": false,
+      "write": "type",
+      "commit": "tab",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/5",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/5",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 1373,
+            "top": 310,
+            "right": 1553,
+            "bottom": 335
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/5",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/5",
+          "writable": true,
+          "enabled": false,
+          "value": "",
+          "rect": {
+            "left": 1373,
+            "top": 310,
+            "right": 1553,
+            "bottom": 335
+          }
+        }
+      }
+    },
+    {
+      "key": "vat_inclusive",
+      "label": "VAT Inclusive",
+      "automation_id": "cboGST",
+      "kind": "combo",
+      "required": false,
+      "write": "select",
+      "commit": "none",
+      "resolved": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/9",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/9",
+          "writable": true,
+          "enabled": false,
+          "value": "[ Not Inclusive ]",
+          "rect": {
+            "left": 1373,
+            "top": 250,
+            "right": 1553,
+            "bottom": 275
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/9",
+          "control_type": "Edit",
+          "inner_path": "0/0/0/0/1/0/0/9",
+          "writable": true,
+          "enabled": false,
+          "value": "[ Not Inclusive ]",
+          "rect": {
+            "left": 1373,
+            "top": 250,
+            "right": 1553,
+            "bottom": 275
+          }
+        }
+      }
+    }
+  ],
+  "grid": {
+    "automation_id": "gcProduct",
+    "row_container": "Row {row}",
+    "cell_name": "{column} row {index}",
+    "row_index_base": 1,
+    "columns": [
+      {
+        "name": "Product Code",
+        "kind": "lookup",
+        "write": "type",
+        "commit": "tab",
+        "header_label": "Product Code",
+        "resolved_cells": {
+          "first_part": "0/0/0/0/1/0/0/21/0/5/2/0/4",
+          "second_part": "0/0/0/0/1/0/0/21/0/5/2/0/4"
+        }
+      },
+      {
+        "name": "Product Description",
+        "kind": "derived",
+        "write": "type",
+        "commit": "tab",
+        "header_label": "Product Description",
+        "resolved_cells": {
+          "first_part": "0/0/0/0/1/0/0/21/0/5/2/0/5",
+          "second_part": "0/0/0/0/1/0/0/21/0/5/2/0/5"
+        }
+      },
+      {
+        "name": "Quantity",
+        "kind": "number",
+        "write": "type",
+        "commit": "tab",
+        "header_label": "Quantity ",
+        "resolved_cells": {
+          "first_part": "0/0/0/0/1/0/0/21/0/5/2/0/6"
+        }
+      },
+      {
+        "name": "UOM",
+        "kind": "lookup",
+        "write": "type",
+        "commit": "tab",
+        "header_label": "UOM",
+        "resolved_cells": {
+          "first_part": "0/0/0/0/1/0/0/21/0/5/2/0/7"
+        }
+      },
+      {
+        "name": "Pre-Close Quantity",
+        "kind": "number",
+        "write": "type",
+        "commit": "tab",
+        "header_label": "Pre-Close Quantity",
+        "resolved_cells": {
+          "first_part": "0/0/0/0/1/0/0/21/0/5/2/0/8",
+          "second_part": "0/0/0/0/1/0/0/21/0/5/2/0/6"
+        }
+      },
+      {
+        "name": "Rate",
+        "kind": "number",
+        "write": "type",
+        "commit": "tab",
+        "header_label": "Rate ",
+        "resolved_cells": {
+          "first_part": "0/0/0/0/1/0/0/21/0/5/2/0/9",
+          "second_part": "0/0/0/0/1/0/0/21/0/5/2/0/7"
+        }
+      },
+      {
+        "name": "Difference",
+        "kind": "derived",
+        "write": "type",
+        "commit": "tab",
+        "header_label": "Difference",
+        "resolved_cells": {
+          "first_part": "0/0/0/0/1/0/0/21/0/5/2/0/10",
+          "second_part": "0/0/0/0/1/0/0/21/0/5/2/0/8"
+        }
+      },
+      {
+        "name": "Amount",
+        "kind": "derived",
+        "write": "type",
+        "commit": "tab",
+        "header_label": "Amount ",
+        "resolved_cells": {
+          "first_part": "0/0/0/0/1/0/0/21/0/5/2/0/11",
+          "second_part": "0/0/0/0/1/0/0/21/0/5/2/0/9"
+        }
+      },
+      {
+        "name": "Document Class",
+        "kind": "lookup",
+        "write": "type",
+        "commit": "tab",
+        "header_label": "Document Class",
+        "resolved_cells": {
+          "first_part": "0/0/0/0/1/0/0/21/0/5/2/0/12",
+          "second_part": "0/0/0/0/1/0/0/21/0/5/2/0/10"
+        }
+      },
+      {
+        "name": "Document Class Description",
+        "kind": "derived",
+        "write": "type",
+        "commit": "tab",
+        "header_label": "Document Class Description",
+        "resolved_cells": {
+          "first_part": "0/0/0/0/1/0/0/21/0/5/2/0/13",
+          "second_part": "0/0/0/0/1/0/0/21/0/5/2/0/11"
+        }
+      },
+      {
+        "name": "Export Documentation",
+        "kind": "combo",
+        "write": "select",
+        "commit": "none",
+        "header_label": "Export Documentation",
+        "resolved_cells": {
+          "second_part": "0/0/0/0/1/0/0/21/0/5/2/0/12"
+        }
+      },
+      {
+        "name": "Additional Description",
+        "kind": "text",
+        "write": "type",
+        "commit": "tab",
+        "header_label": "Additional Description",
+        "resolved_cells": {
+          "second_part": "0/0/0/0/1/0/0/21/0/5/2/0/13"
+        }
+      },
+      {
+        "name": "Expected Delivery Date",
+        "kind": "date",
+        "write": "type",
+        "commit": "tab",
+        "header_label": "Expected Delivery Date",
+        "resolved_cells": {
+          "second_part": "0/0/0/0/1/0/0/21/0/5/2/0/14"
+        }
+      }
+    ],
+    "columns_seen": {
+      "first_part": [
+        "",
+        "GridColumn1",
+        " ",
+        "Sl#",
+        "Product Code",
+        "Product Description",
+        "Quantity ",
+        "UOM",
+        "Pre-Close Quantity",
+        "Rate ",
+        "Difference",
+        "Amount ",
+        "Document Class",
+        "Document Class Description",
+        "Additional Description",
+        "Expected Delivery Date",
+        "Export Documentation"
+      ],
+      "second_part": [
+        "",
+        "GridColumn1",
+        " ",
+        "Sl#",
+        "Product Code",
+        "Product Description",
+        "Quantity ",
+        "UOM",
+        "Pre-Close Quantity",
+        "Rate ",
+        "Difference",
+        "Amount ",
+        "Document Class",
+        "Document Class Description",
+        "Additional Description",
+        "Expected Delivery Date",
+        "Export Documentation"
+      ]
+    },
+    "virtualized": {
+      "first_part": true,
+      "second_part": true
+    },
+    "resolved": {
+      "first_part": {
+        "capture": "first_part",
+        "path": "0/0/0/0/1/0/0/21/0/5",
+        "control_type": "Table",
+        "inner_path": null,
+        "writable": false,
+        "enabled": true,
+        "value": "",
+        "rect": {
+          "left": 26,
+          "top": 373,
+          "right": 1550,
+          "bottom": 979
+        }
+      },
+      "second_part": {
+        "capture": "second_part",
+        "path": "0/0/0/0/1/0/0/21/0/5",
+        "control_type": "Table",
+        "inner_path": null,
+        "writable": false,
+        "enabled": true,
+        "value": "",
+        "rect": {
+          "left": 26,
+          "top": 373,
+          "right": 1550,
+          "bottom": 979
+        }
+      }
+    }
+  },
+  "actions": {
+    "save_new": "hlblSave_New",
+    "save_close": "hlblSave_Close",
+    "copy": "hlblCopy",
+    "cancel": "hlblCancel_Ext",
+    "resolved": {
+      "save_new": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/20/0/0/0/3",
+          "control_type": "Button",
+          "inner_path": null,
+          "writable": false,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 1580,
+            "top": 129,
+            "right": 1855,
+            "bottom": 158
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/20/0/0/0/3",
+          "control_type": "Button",
+          "inner_path": null,
+          "writable": false,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 1580,
+            "top": 129,
+            "right": 1855,
+            "bottom": 158
+          }
+        }
+      },
+      "save_close": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/20/0/0/0/2",
+          "control_type": "Button",
+          "inner_path": null,
+          "writable": false,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 1580,
+            "top": 158,
+            "right": 1855,
+            "bottom": 187
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/20/0/0/0/2",
+          "control_type": "Button",
+          "inner_path": null,
+          "writable": false,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 1580,
+            "top": 158,
+            "right": 1855,
+            "bottom": 187
+          }
+        }
+      },
+      "copy_button": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/20/0/0/0/1",
+          "control_type": "Button",
+          "inner_path": null,
+          "writable": false,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 1580,
+            "top": 186,
+            "right": 1855,
+            "bottom": 215
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/20/0/0/0/1",
+          "control_type": "Button",
+          "inner_path": null,
+          "writable": false,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 1580,
+            "top": 186,
+            "right": 1855,
+            "bottom": 215
+          }
+        }
+      },
+      "cancel": {
+        "first_part": {
+          "capture": "first_part",
+          "path": "0/0/0/0/1/0/0/20/0/0/0/0",
+          "control_type": "Button",
+          "inner_path": null,
+          "writable": false,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 1580,
+            "top": 215,
+            "right": 1855,
+            "bottom": 244
+          }
+        },
+        "second_part": {
+          "capture": "second_part",
+          "path": "0/0/0/0/1/0/0/20/0/0/0/0",
+          "control_type": "Button",
+          "inner_path": null,
+          "writable": false,
+          "enabled": true,
+          "value": "",
+          "rect": {
+            "left": 1580,
+            "top": 215,
+            "right": 1855,
+            "bottom": 244
+          }
+        }
+      }
+    }
+  },
+  "captures": [
+    {
+      "name": "first_part",
+      "file": "C:/Users/sanga/Desktop/fact_automation/scripts/uia/first_part.json",
+      "captured_at": "2026-11-18T17:19:32",
+      "window_title": "FACT ERP.NG - Accounts Receivable - Sales - Entry - Sale Order - Add",
+      "hwnd": 199608,
+      "nodes": 265
+    },
+    {
+      "name": "second_part",
+      "file": "C:/Users/sanga/Desktop/fact_automation/scripts/uia/second_part.json",
+      "captured_at": "2026-11-18T17:19:55",
+      "window_title": "FACT ERP.NG - Accounts Receivable - Sales - Entry - Sale Order - Add",
+      "hwnd": 199608,
+      "nodes": 266
+    }
+  ],
+  "warnings": [
+    "proforma_date: deProf_dt is disabled in first_part; another field probably enables it first",
+    "proforma_date: deProf_dt is disabled in second_part; another field probably enables it first",
+    "customer_order_date: deCustOrd_dt is disabled in first_part; another field probably enables it first",
+    "customer_order_date: deCustOrd_dt is disabled in second_part; another field probably enables it first",
+    "vat_inclusive: cboGST is disabled in first_part; another field probably enables it first",
+    "vat_inclusive: cboGST is disabled in second_part; another field probably enables it first",
+    "grid column 'Quantity': cell not exposed in second_part (scrolled out of view)",
+    "grid column 'UOM': cell not exposed in second_part (scrolled out of view)",
+    "grid column 'Export Documentation': cell not exposed in first_part (scrolled out of view)",
+    "grid column 'Additional Description': cell not exposed in first_part (scrolled out of view)",
+    "grid column 'Expected Delivery Date': cell not exposed in first_part (scrolled out of view)"
+  ]
+}

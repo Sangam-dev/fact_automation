@@ -1,0 +1,168 @@
+{
+  "schema": "form-map-source/1",
+  "form_id": "sale_order",
+  "title_contains": "Sale Order",
+  "process": "FACTERPNG.exe",
+  "window_automation_id": "40200",
+  "status_text": {
+    "key": "status",
+    "label": "Checking Level",
+    "automation_id": "txtMemoStatus",
+    "kind": "readonly"
+  },
+  "header": [
+    {
+      "key": "document_scheme",
+      "label": "Document Numbering Scheme",
+      "automation_id": "peDocScheme",
+      "kind": "lookup"
+    },
+    {
+      "key": "order_number",
+      "label": "Order Number",
+      "automation_id": "TxtBody",
+      "kind": "readonly"
+    },
+    {
+      "key": "order_date",
+      "label": "Date",
+      "automation_id": "deOa_date",
+      "kind": "date",
+      "required": true
+    },
+    {
+      "key": "proforma_no",
+      "label": "Proforma Invoice / Quotation No",
+      "automation_id": "pePro_no",
+      "kind": "lookup"
+    },
+    {
+      "key": "proforma_date",
+      "label": "Proforma Date",
+      "automation_id": "deProf_dt",
+      "kind": "date"
+    },
+    {
+      "key": "customer_order_no",
+      "label": "Customer Order Number",
+      "automation_id": "peCustOrd_no",
+      "kind": "text"
+    },
+    {
+      "key": "customer_order_date",
+      "label": "Customer Order Date",
+      "automation_id": "deCustOrd_dt",
+      "kind": "date"
+    },
+    {
+      "key": "expected_delivery_date",
+      "label": "Expected Delivery Date",
+      "automation_id": "deEDD",
+      "kind": "date"
+    },
+    {
+      "key": "currency_code",
+      "label": "Currency",
+      "automation_id": "peCurr_desc",
+      "kind": "lookup",
+      "required": true
+    },
+    {
+      "key": "currency_name",
+      "label": "Currency name",
+      "automation_id": "TxtCurrdescript",
+      "kind": "derived"
+    },
+    {
+      "key": "exchange_rate",
+      "label": "Exchange Rate",
+      "automation_id": "txtCurr_rate",
+      "kind": "derived"
+    },
+    {
+      "key": "customer_code",
+      "label": "Customer",
+      "automation_id": "peCustcode",
+      "kind": "lookup",
+      "required": true
+    },
+    {
+      "key": "customer_name",
+      "label": "Customer name",
+      "automation_id": "txtCustname",
+      "kind": "derived"
+    },
+    {
+      "key": "salesman_code",
+      "label": "Salesman (Agent)",
+      "automation_id": "peAgentcode",
+      "kind": "lookup"
+    },
+    {
+      "key": "salesman_name",
+      "label": "Salesman name",
+      "automation_id": "txtAgentname",
+      "kind": "derived"
+    },
+    {
+      "key": "document_class",
+      "label": "Document Class",
+      "automation_id": "peClass",
+      "kind": "lookup",
+      "required": true
+    },
+    {
+      "key": "document_class_description",
+      "label": "Document Class description",
+      "automation_id": "txtClassDesc",
+      "kind": "derived"
+    },
+    {
+      "key": "account_id",
+      "label": "Account ID",
+      "automation_id": "peAccountID",
+      "kind": "lookup"
+    },
+    {
+      "key": "owner",
+      "label": "Owner",
+      "automation_id": "peOwner",
+      "kind": "derived"
+    },
+    {
+      "key": "vat_inclusive",
+      "label": "VAT Inclusive",
+      "automation_id": "cboGST",
+      "kind": "combo",
+      "write": "select",
+      "commit": "none"
+    }
+  ],
+  "grid": {
+    "automation_id": "gcProduct",
+    "row_container": "Row {row}",
+    "cell_name": "{column} row {index}",
+    "row_index_base": 1,
+    "columns": [
+      { "name": "Product Code", "kind": "lookup", "commit": "tab" },
+      { "name": "Product Description", "kind": "derived" },
+      { "name": "Quantity", "kind": "number" },
+      { "name": "UOM", "kind": "lookup" },
+      { "name": "Pre-Close Quantity", "kind": "number" },
+      { "name": "Rate", "kind": "number" },
+      { "name": "Difference", "kind": "derived" },
+      { "name": "Amount", "kind": "derived" },
+      { "name": "Document Class", "kind": "lookup" },
+      { "name": "Document Class Description", "kind": "derived" },
+      { "name": "Export Documentation", "kind": "combo", "write": "select", "commit": "none" },
+      { "name": "Additional Description", "kind": "text" },
+      { "name": "Expected Delivery Date", "kind": "date" }
+    ]
+  },
+  "actions": {
+    "save_new": "hlblSave_New",
+    "save_close": "hlblSave_Close",
+    "copy": "hlblCopy",
+    "cancel": "hlblCancel_Ext"
+  }
+}

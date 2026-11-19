@@ -1,0 +1,87 @@
+
+{
+  "header_fields": {
+    "document_numbering_scheme": "SALES ORDER 2082/83",
+    "order_number": "AUTOMATIC",
+    "order_date": "2083/03/32",
+    "proforma_invoice_quotation_no": "TEST",
+    "customer_order_number": "2222",
+    "expected_delivery_date": null,
+    "currency": "NPR",
+    "customer_code": "CE-CUS2542",
+    "salesman_code": "1534",
+    "document_class": "R",
+    "vat_inclusive": "Not Inclusive",
+    "account_id": "AC000000001480"
+  },
+
+  "product_grid": {
+    "columns": [
+      "serial_number",
+      "product_code",
+      "product_description",
+      "quantity",
+      "uom",
+      "pre_close_quantity",
+      "rate",
+      "difference",
+      "amount",
+      "document_class",
+      "document_class_description",
+      "export_documentation",
+      "additional_description",
+      "expected_delivery_date"
+    ],
+
+    "rows": [
+      {
+        "serial_number": 1,
+        "product_code": "BRM-003",
+        "product_description": "POLY HR SARBOTTAM BLUE",
+        "quantity": 1000.0000,
+        "uom": "KG",
+        "pre_close_quantity": 10.0000,
+        "rate": 100.0000,
+        "difference": 10.00,
+        "amount": 100010.00,
+        "document_class": "R",
+        "document_class_description": "Rupandehi, Bhairahawa",
+        "export_documentation": true,
+        "additional_description": "N",
+        "expected_delivery_date": null
+      },
+      {
+        "serial_number": 2,
+        "product_code": "BRAND- 14",
+        "product_description": "5.1 Sound System + Woofer",
+        "quantity": 299.0000,
+        "uom": "PCS",
+        "pre_close_quantity": 29.0000,
+        "rate": 29.0000,
+        "difference": 9.00,
+        "amount": 8680.00,
+        "document_class": "R",
+        "document_class_description": "Rupandehi, Bhairahawa",
+        "export_documentation": true,
+        "additional_description": "N",
+        "expected_delivery_date": null
+      },
+      {
+        "serial_number": 3,
+        "product_code": null,
+        "product_description": null,
+        "quantity": 0.0000,
+        "uom": null,
+        "pre_close_quantity": 0.0000,
+        "rate": 0.0000,
+        "difference": 0.00,
+        "amount": 0.00,
+        "document_class": null,
+        "document_class_description": null,
+        "export_documentation": true,
+        "additional_description": "N",
+        "expected_delivery_date": null
+      }
+    ]
+  }
+}
