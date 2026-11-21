@@ -11,6 +11,11 @@ What the script does is deliberately boring: call ``cli.py automation run`` with
 a values file, print the exit code with its meaning, and wait so the window does
 not vanish. It contains no automation logic at all - it runs the same code path
 ``automation run`` uses, so there is one behaviour, not two.
+
+The run always starts from the screen FACT is showing (``--from-screen``). A
+record posted while the app is already open on the list, or on a half-opened
+form, is the normal case, so the launcher must not insist on the first step:
+sending FACT back to the login screen would undo the operator's own navigation.
 """
 
 from __future__ import annotations
@@ -94,7 +99,8 @@ def render_launcher(
         "echo   stop: Alt+T  pause: Alt+P  resume: Alt+R",
         "echo.",
         "",
-        f'"%PY%" "cli.py" automation run {name} --values "%VALUES%"',
+        "rem start at the step the screen belongs to, not at step 1",
+        f'"%PY%" "cli.py" automation run {name} --values "%VALUES%" --from-screen',
         "",
         "rem keep the window open when the script was double-clicked",
         'set "CODE=%ERRORLEVEL%"',

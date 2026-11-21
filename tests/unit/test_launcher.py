@@ -48,6 +48,15 @@ def test_the_launcher_runs_the_registered_automation(tmp_path: Path) -> None:
     assert '"cli.py"' in text
 
 
+def test_the_launcher_starts_from_the_screen_fact_is_showing(tmp_path: Path) -> None:
+    # A record is posted while the app is already open somewhere, so the run must
+    # not insist on going back to the first step.
+    text = render_launcher(NAME, project=tmp_path, python_exe="python")
+
+    assert "--from-screen" in text
+    assert text.index("--from-screen") > text.index("automation run")
+
+
 def test_the_launcher_uses_crlf_so_cmd_does_not_trip_over_line_endings(
     tmp_path: Path,
 ) -> None:

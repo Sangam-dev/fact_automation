@@ -9,6 +9,10 @@ So the walk is: keep going back while a step is a ``restart`` step or its
 screen is not the one on display. What it lands on is either a step that is
 safe to run from a standing start, or the first step, where the runner clears
 any stale form and lets the checkpoint fail loudly if even that is wrong.
+
+A person can also say where to start: with ``from_screen`` the screen on
+display chooses the step, not the cursor - the app is already where it should
+be, so replaying the navigation that got there would be pointless.
 """
 
 from __future__ import annotations
@@ -72,31 +76,52 @@ def find_start_index(
     return index
 
 
+def start_on_screen(
+    steps: Sequence[AutomationStep],
+    is_satisfied: Satisfied,
+) -> int | None:
+    """The first step that belongs on the screen on display, or None.
+
+    This is the explicit "start where I am" rule, and it differs from
+    :func:`find_start_index` on purpose: it may land on a ``restart`` step.
+    That policy exists to stop a run *guessing* its way into a form that may
+    already hold data, not to stop a person saying "the form is open, fill
+    it". The refusals that protect the record itself - an unresolved save,
+    changed values - are decided before this is consulted.
+    """
+    for index, step in enumerate(steps):
+        if is_satisfied(step.checkpoint.state):
+            return index
+    return None
+
+
 def plan_resume(
     steps: Sequence[AutomationStep],
     progress: ProgressState | None = None,
     *,
     values_digest: str | None = None,
     is_satisfied: Satisfied | None = None,
+    from_screen: bool = False,
 ) -> ResumePlan:
     """Decide the starting step, or refuse to start at all.
 
     ``is_satisfied`` is called once per candidate with the checkpoint's state
     id. When it is omitted every screen is assumed to be available, which is
     what the wizard's proof run wants; a real run always passes the recogniser.
+
+    ``from_screen`` starts at the step the screen belongs to instead of at the
+    step an earlier run left off at. It is the operator's explicit choice: it
+    means "the app is already where I want it", so it is allowed to begin later
+    in the plan than any run has been.
     """
     if not steps:
         raise ValueError("an automation with no steps cannot be resumed")
     available = is_satisfied or (lambda _state: True)
 
-    if progress is None:
-        return _settle(
-            steps,
-            0,
-            f"no earlier run of this automation; starting at step 1",
-        )
-
-    if progress.save_unresolved:
+    # The record's own protection comes first, whichever start was asked for: a
+    # Save of unknown result and a different set of values both mean a person
+    # has to decide something before anything is typed.
+    if progress is not None and progress.save_unresolved:
         return ResumePlan(
             index=min(progress.cursor, len(steps) - 1),
             reason="the previous run did not finish",
@@ -104,7 +129,11 @@ def plan_resume(
             blocked_reason=progress.block_reason(),
         )
 
-    if values_digest is not None and progress.values_changed(values_digest):
+    if (
+        progress is not None
+        and values_digest is not None
+        and progress.values_changed(values_digest)
+    ):
         return ResumePlan(
             index=min(progress.cursor, len(steps) - 1),
             reason="the record data changed",
@@ -113,6 +142,34 @@ def plan_resume(
                 f"run {progress.run_id} used different values; re-run with "
                 "--restart to type this record from the beginning"
             ),
+        )
+
+    if from_screen:
+        found = start_on_screen(steps, available)
+        if found is None:
+            return _settle(
+                steps,
+                0,
+                "the screen on display is not one of the plan's screens",
+            )
+        if steps[found].action in ("fill", "run"):
+            return _settle(
+                steps,
+                found,
+                f"the screen on display is where step {found + 1} starts, and "
+                "that step types into the form already on it",
+            )
+        return _settle(
+            steps,
+            found,
+            f"the screen on display is where step {found + 1} starts",
+        )
+
+    if progress is None:
+        return _settle(
+            steps,
+            0,
+            f"no earlier run of this automation; starting at step 1",
         )
 
     if progress.cursor >= len(steps):
@@ -167,4 +224,10 @@ def _settle(
     return ResumePlan(index=index, reason=reason, walked_back=walked_back)
 
 
-__all__ = ["ResumePlan", "Satisfied", "find_start_index", "plan_resume"]
+__all__ = [
+    "ResumePlan",
+    "Satisfied",
+    "find_start_index",
+    "plan_resume",
+    "start_on_screen",
+]

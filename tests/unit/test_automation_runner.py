@@ -162,6 +162,14 @@ def saved_unreachable() -> SaveResult:
     )
 
 
+def saved_aborted() -> SaveResult:
+    return SaveResult(
+        outcome=ConfirmationResult(
+            outcome="aborted", reason="the run was stopped before Save", source="user"
+        )
+    )
+
+
 class Saver:
     def __init__(self, result: SaveResult | None = None, raises: Exception | None = None):
         self.result = result if result is not None else saved_ok()
@@ -324,6 +332,49 @@ def test_a_run_that_lost_its_form_starts_from_the_top(registered) -> None:
     assert run.status == SAVED
 
 
+def test_from_screen_starts_at_the_step_the_screen_belongs_to(registered) -> None:
+    # The form is already open when the command starts, so the run begins on the
+    # step that belongs there instead of replaying the clicks that got there.
+    run, executor, _saver, clear = go(
+        registered, screen=Screen("05_add"), from_screen=True
+    )
+
+    assert executor.start_index == 1
+    assert executor.positions == [2, 3]
+    assert clear.calls == 0, "a form the operator opened is not cleared"
+    assert run.status == SAVED
+
+
+def test_a_plan_without_a_save_check_finishes_when_it_clicks(roots) -> None:
+    # The app refuses to write (a trial build), so the plan was registered with
+    # the save unchecked: the click is the end of the job, and the next record
+    # must not be stopped by a save nobody could ever resolve.
+    automations, progress_root = roots
+    data = payload()
+    data["save"] = {
+        "button": "Save",
+        "verifier": "none",
+        "footprint": [],
+        "check": False,
+    }
+    registry.save(Automation.model_validate(data), automations)
+
+    run, _executor, saver, _clear = go((automations, progress_root), saver=Saver(saved_unknown()))
+
+    assert saver.called, "the Save click still happens"
+    assert run.status == SAVED
+    assert run.exit_code == 0
+    assert "does not check" in run.message
+    assert run.progress is not None
+    assert run.progress.save_unresolved is False
+
+
+def test_without_the_flag_the_screen_does_not_choose_the_step(registered) -> None:
+    _run, executor, _saver, _clear = go(registered, screen=Screen("05_add"))
+
+    assert executor.start_index == 0
+
+
 def test_different_values_are_refused(registered) -> None:
     _automations, progress_root = registered
     item = store.new_progress(NAME, {"customer": "Sita"})
@@ -336,6 +387,25 @@ def test_different_values_are_refused(registered) -> None:
     assert run.exit_code == 2
     assert "--restart" in run.message
     assert executor.called is False
+
+
+def test_changed_values_start_a_new_record_when_no_form_is_on_screen(registered) -> None:
+    # The values file was edited while the app sat on a screen that holds no form:
+    # there is nothing half-typed to protect, so the run must begin the new record
+    # instead of demanding a command-line flag a double-click user cannot type.
+    _automations, progress_root = registered
+    item = store.new_progress(NAME, {"customer": "Sita"})
+    item.mark_step(0, "01-open")
+    save(progress_root, item)
+
+    run, executor, _saver, _clear = go(registered, screen=Screen("04_view"))
+
+    assert run.status == SAVED
+    assert executor.called is True
+    assert executor.start_index == 0
+    assert run.progress is not None
+    assert run.progress.values_digest != item.values_digest, "the new data, not the old record"
+    assert run.progress.completed == ["01-open", "02-lines", "03-customer"]
 
 
 # ------------------------------------------------------------- the save guard --
@@ -459,6 +529,18 @@ def test_a_missing_save_button_does_not_leave_a_marker(registered) -> None:
     run, _executor, _saver, _clear = go(registered, saver=Saver(saved_unreachable()))
 
     assert run.status == FAILED
+    stored = store.load_progress(NAME, progress_root)
+    assert stored is not None
+    assert stored.save_unresolved is False
+    assert stored.pending_save is None
+
+
+def test_a_save_stopped_before_click_does_not_block_the_next_run(registered) -> None:
+    _automations, progress_root = registered
+    run, _executor, saver, _clear = go(registered, saver=Saver(saved_aborted()))
+
+    assert saver.called
+    assert run.status == STOPPED
     stored = store.load_progress(NAME, progress_root)
     assert stored is not None
     assert stored.save_unresolved is False

@@ -6,7 +6,7 @@ import pytest
 
 from core.automation.model import AutomationStep, Checkpoint
 from core.automation.progress import digest_values, new_progress
-from core.automation.resume import find_start_index, plan_resume
+from core.automation.resume import find_start_index, plan_resume, start_on_screen
 
 
 def plans() -> list[AutomationStep]:
@@ -155,6 +155,67 @@ def test_an_empty_plan_cannot_be_resumed() -> None:
         find_start_index([], 0, everything)
 
 
+# ------------------------------------------------------- starting where you are --
+def test_from_screen_starts_at_the_step_the_screen_belongs_to() -> None:
+    plan = plan_resume(plans(), is_satisfied=at_view, from_screen=True)
+    assert plan.index == 0
+    assert "where step 1 starts" in plan.reason
+
+
+def test_from_screen_beats_the_earlier_runs_cursor() -> None:
+    # The last run left off at step 1, but the form is open now: the operator
+    # asked to start where the app is, so the run starts there.
+    def on_the_form(state: str) -> bool:
+        return state == "05_add"
+
+    item = progress(0)
+    assert plan_resume(plans(), item, is_satisfied=on_the_form).index == 0
+    plan = plan_resume(plans(), item, is_satisfied=on_the_form, from_screen=True)
+    assert plan.index == 1
+    assert plan.blocked is False
+
+
+def test_from_screen_may_start_on_a_typing_step_when_the_form_is_open() -> None:
+    def on_the_form(state: str) -> bool:
+        return state == "05_add"
+
+    plan = plan_resume(plans(), is_satisfied=on_the_form, from_screen=True)
+    assert plan.index == 1, "the form is open, so the run fills it where it is"
+    assert "types into the form already on it" in plan.reason
+
+
+def test_from_screen_with_no_matching_screen_starts_from_the_top() -> None:
+    plan = plan_resume(plans(), is_satisfied=nothing, from_screen=True)
+    assert plan.index == 0
+    assert plan.blocked is False
+    assert "not one of the plan's screens" in plan.reason
+
+
+def test_start_on_screen_takes_the_first_step_that_matches() -> None:
+    steps = plans()
+    # Steps 2 and 3 share the form screen: the first of them is the start.
+    assert start_on_screen(steps, everything) == 0
+    assert start_on_screen(steps, lambda state: state == "05_add") == 1
+    assert start_on_screen([], everything) is None
+
+
+def test_the_default_start_ignores_the_screen_without_the_flag() -> None:
+    plan = plan_resume(plans(), is_satisfied=at_view)
+    assert plan.index == 0
+    assert "no earlier run" in plan.reason
+
+
+def test_from_screen_will_not_start_itself_on_a_hand_edit_step() -> None:
+    steps = plans()
+    steps[1].checkpoint.resume = "hand_edit"
+    plan = plan_resume(
+        steps, is_satisfied=lambda state: state == "05_add", from_screen=True
+    )
+    assert plan.index == 1
+    assert plan.blocked is True
+    assert "hand_edit" in plan.blocked_reason
+
+
 # --------------------------------------------------------------- the refusals --
 def test_an_unresolved_save_stops_the_run_before_it_starts() -> None:
     item = progress(4)
@@ -172,6 +233,27 @@ def test_different_values_stop_the_run() -> None:
         item,
         values_digest=digest_values({"customer": "Sita"}),
         is_satisfied=everything,
+    )
+    assert plan.blocked is True
+    assert "--restart" in plan.blocked_reason
+
+
+def test_from_screen_still_refuses_an_unresolved_save() -> None:
+    item = progress(4)
+    item.begin_save()
+    plan = plan_resume(plans(), item, is_satisfied=everything, from_screen=True)
+    assert plan.blocked is True
+    assert "result is unknown" in plan.blocked_reason
+
+
+def test_from_screen_still_refuses_different_values() -> None:
+    item = progress(2, values_digest=digest_values({"customer": "Ram"}))
+    plan = plan_resume(
+        plans(),
+        item,
+        values_digest=digest_values({"customer": "Sita"}),
+        is_satisfied=everything,
+        from_screen=True,
     )
     assert plan.blocked is True
     assert "--restart" in plan.blocked_reason

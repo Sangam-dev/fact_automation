@@ -154,7 +154,9 @@ class Executor:
     def __call__(self, steps: list, values: dict, **options: Any):
         from execution.actions.engine import PlanResult
 
-        self.passes.append(([step.key or step.button for step in steps], dict(values)))
+        self.passes.append(
+            ([getattr(step, "key", None) or step.button for step in steps], dict(values))
+        )
         return PlanResult(inspection=object(), fields={}, steps_run=len(steps))
 
 
@@ -288,3 +290,102 @@ def test_a_plan_without_row_steps_refuses_rows(tmp_path: Path) -> None:
     )
     assert result.status == "blocked"
     assert "no steps that repeat per row" in result.message
+
+
+def test_a_script_given_the_values_file_enters_the_rows_itself(
+    tmp_path: Path,
+) -> None:
+    """The filler reads the lines from the document, so the plan needs no rows."""
+    seen: list[tuple[list[str], Any]] = []
+
+    def executor(steps: list, values: dict, **options: Any):
+        from execution.actions.engine import PlanResult
+
+        seen.append(
+            (
+                [step.action for step in steps],
+                options.get("values_file"),
+                options.get("settle_seconds"),
+            )
+        )
+        return PlanResult(inspection=object(), fields={}, steps_run=len(steps))
+
+    registry.save(
+        plan(
+            steps=[
+                {
+                    "id": "01-run-filler",
+                    "action": "run",
+                    "script": "execution/scripts/form_filler_1.py",
+                    "args": ["{values_file}"],
+                    "checkpoint": {"state": "05_add", "resume": "restart"},
+                }
+            ]
+        ),
+        tmp_path / "automations",
+    )
+    result = run_automation(
+        NAME,
+        VALUES,
+        rows=ROWS,
+        values_file="order.json",
+        automations_root=tmp_path / "automations",
+        progress_root=tmp_path / "progress",
+        table=_table(),
+        detector=Screen(),
+        attach=lambda app, **kwargs: object(),
+        inspect=lambda window: object(),
+        execute=executor,
+        save_call=Saver(),
+        clear_form=lambda *a, **k: True,
+        output=lambda line: None,
+        sleep=lambda seconds: None,
+    )
+    assert result.status == "saved", result.message
+    assert seen == [(["run"], "order.json", 15.0)], "once, with the file, patient"
+
+
+def test_a_step_that_cannot_find_its_control_says_which_screen_is_up(
+    tmp_path: Path,
+) -> None:
+    """"no match in the live window" is useless on its own: name the screen."""
+    registry.save(
+        plan(
+            steps=[
+                {
+                    "id": "01-click-open",
+                    "action": "click",
+                    "button": "Open",
+                    "checkpoint": {"state": "05_add", "resume": "replay"},
+                }
+            ]
+        ),
+        tmp_path / "automations",
+    )
+    def missing_control(steps: list, values: dict, **options: Any):
+        from execution.actions.engine import PlanResult
+
+        return PlanResult(
+            inspection=object(),
+            fields={},
+            problems=("step 1 (click 'Open'): no match in the live window",),
+        )
+
+    result = run_automation(
+        NAME,
+        VALUES,
+        automations_root=tmp_path / "automations",
+        progress_root=tmp_path / "progress",
+        table=_table(),
+        detector=Screen(),
+        attach=lambda app, **kwargs: object(),
+        inspect=lambda window: object(),
+        execute=missing_control,
+        save_call=Saver(),
+        clear_form=lambda *a, **k: True,
+        output=lambda line: None,
+        sleep=lambda seconds: None,
+        checkpoint_seconds=0,
+    )
+    assert result.status == "failed"
+    assert "the screen on display is 05_add" in result.message
