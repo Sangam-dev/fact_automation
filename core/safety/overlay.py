@@ -61,6 +61,9 @@ class StatusOverlay:
             thread.join(timeout=2.0)
 
     def _run(self) -> None:
+        import gc
+
+        root = None
         try:
             import tkinter as tk
         except Exception:
@@ -69,6 +72,10 @@ class StatusOverlay:
             return
 
         try:
+            # No module-level default root: tkinter would otherwise destroy it from
+            # the main thread at exit, which aborts the process with
+            # "Tcl_AsyncDelete: async handler deleted by the wrong thread".
+            tk.NoDefaultRoot()
             root = tk.Tk()
             self._root = root
             root.overrideredirect(True)
@@ -104,6 +111,18 @@ class StatusOverlay:
         finally:
             self._root = None
             self._label = None
+            if root is not None:
+                try:
+                    root.destroy()
+                except Exception:
+                    pass
+            root = None
+            # tkinter makes reference cycles (widget -> tkapp -> python command ->
+            # widget). They have to be collected here, in the thread that owns the
+            # Tcl interpreter: one freed from another thread aborts the process with
+            # "Tcl_AsyncDelete: async handler deleted by the wrong thread", which
+            # also throws away the run's exit code.
+            gc.collect()
 
     def _poll(self) -> None:
         with self._data_lock:
