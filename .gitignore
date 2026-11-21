@@ -11,6 +11,9 @@ myvenv/
 .coverage
 htmlcov/
 scripts/
+# Deterministic fillers are part of registered automations, not generated data.
+!execution/scripts/
+!execution/scripts/*.py
 # Generated runtime data (keep the folders, not the contents)
 data/screenshots/*
 data/ai_logs/*
