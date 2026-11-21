@@ -15,7 +15,7 @@ import pyperclip
 
 from desktop.windows.points import point_owned_by
 from desktop.windows.topmost import raise_our_windows
-from desktop.windows.window import is_foreground
+from desktop.windows.window import get_window, is_foreground
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
 
@@ -274,6 +274,39 @@ def click_checked(
             f"nothing was clicked: {window.title!r} is not in the foreground"
         )
     click(x, y, button)
+
+
+def click_control(
+    control: Any,
+    owner: Any,
+    *,
+    require_foreground: bool = True,
+    button: str = "left",
+) -> None:
+    """Click a UIA/pywinauto control through the tagged, checked input path.
+
+    ``control`` supplies a fresh rectangle and ``owner`` is its top-level window
+    wrapper or handle. The click is validated against that live window before
+    sending tagged mouse events, so it passes the agent input lock without
+    bypassing target-window safety checks.
+    """
+    try:
+        rect = control.rectangle()
+        x = (int(rect.left) + int(rect.right)) // 2
+        y = (int(rect.top) + int(rect.bottom)) // 2
+        handle = int(owner if isinstance(owner, int) else owner.handle)
+        window = get_window(handle)
+    except Exception as exc:
+        raise InputError(
+            f"could not resolve a live target for the control click: {exc}"
+        ) from exc
+    click_checked(
+        x,
+        y,
+        window,
+        require_foreground=require_foreground,
+        button=button,
+    )
 
 
 def click(x: int, y: int, button: str = "left") -> None:
