@@ -241,6 +241,56 @@ def test_pinning_an_app_lifts_new_windows_and_leaves_pinned_ones_alone(
     assert pinned == [20]
     assert calls == [(20, win32con.HWND_TOPMOST)]
 
+    calls.clear()
+    unpinned = windows.pin_app_windows("FACTERPNG.exe", pin=False)
+    assert unpinned == [10]
+    assert calls == [(10, win32con.HWND_NOTOPMOST)]
+
+
+def test_release_pinned_windows_stops_keeper_before_unpinning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from threading import Event
+
+    from desktop.windows import window as windows
+
+    calls: list[tuple] = []
+
+    class Keeper:
+        stopped = Event()
+
+        def join(self) -> None:
+            calls.append(("join", self.stopped.is_set()))
+
+    keeper = Keeper()
+    windows._keepers["FACTERP.NG.exe"] = keeper  # type: ignore[assignment]
+    monkeypatch.setattr(
+        windows,
+        "pin_app_windows",
+        lambda process_name, pin=True: calls.append(("unpin", process_name, pin)) or [10, 20],
+    )
+
+    result = windows.release_pinned_windows("FACTERP.NG")
+
+    assert result == [10, 20]
+    assert calls == [
+        ("join", True),
+        ("unpin", "FACTERP.NG", False),
+    ]
+    assert "FACTERP.NG.exe" not in windows._keepers
+
+
+def test_release_pinned_windows_without_process_is_a_noop(monkeypatch) -> None:
+    from desktop.windows import window as windows
+
+    monkeypatch.setattr(
+        windows,
+        "pin_app_windows",
+        lambda *args, **kwargs: pytest.fail("must not enumerate windows"),
+    )
+
+    assert windows.release_pinned_windows(None) == []
+
 
 def test_pin_and_unpin_window(monkeypatch: pytest.MonkeyPatch) -> None:
     from desktop.windows.window import pin_window, pinned_window

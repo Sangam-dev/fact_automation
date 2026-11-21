@@ -304,7 +304,8 @@ def pin_app_windows(process_name: str, pin: bool = True) -> list[int]:
     for window in list_windows():
         if not _process_matches(window.process_name, process_name):
             continue
-        if pin and is_topmost(window.handle):
+        topmost = is_topmost(window.handle)
+        if (pin and topmost) or (not pin and not topmost):
             continue
         try:
             win32gui.SetWindowPos(window.handle, insert_after, 0, 0, 0, 0, flags)
@@ -354,6 +355,30 @@ def keep_windows_pinned(
             keeper.start()
     pin_app_windows(process_name)
     return True
+
+
+def release_pinned_windows(process_name: str | None) -> list[int]:
+    """Stop this process's pin keeper and unpin every current app window.
+
+    Unpinning first and stopping the keeper second is racy: its next tick would
+    immediately put FACT back above the user's other windows. Wait for an active
+    tick to finish before removing the topmost flag from all app windows.
+    """
+    if not process_name:
+        return []
+    with _keepers_lock:
+        keepers = [
+            keeper
+            for name, keeper in list(_keepers.items())
+            if _process_matches(name, process_name)
+        ]
+        for name in list(_keepers):
+            if _process_matches(name, process_name):
+                _keepers.pop(name).stopped.set()
+    for keeper in keepers:
+        if threading.current_thread() is not keeper:
+            keeper.join()
+    return pin_app_windows(process_name, pin=False)
 
 
 def attach_window(config: AppConfig) -> WindowInfo:
