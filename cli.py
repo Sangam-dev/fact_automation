@@ -33,6 +33,7 @@ from core.config import (
     project_root,
 )
 from core.logging.setup import mask_secret, setup_logging
+from core.safety.state_file import write_state
 from core.state.run_lock import RunLock, RunLockError
 
 __version__ = "2.0.0"
@@ -383,15 +384,54 @@ def run_safety_test(
     return 0
 
 
+class _Transcript:
+    """Console output for one run, copied to data/logs/automation.log.
+
+    The launcher window closes when the run ends, so the file is what is left to
+    read afterwards.  A file that cannot be opened is simply not written.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.path = project_root() / "data" / "logs" / "automation.log"
+        self._file = None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._file = self.path.open("a", encoding="utf-8")
+            self._write(f"\n=== {datetime.now():%Y-%m-%d %H:%M:%S}  {name} ===")
+        except OSError:
+            self._file = None
+
+    def _write(self, line: str) -> None:
+        if self._file is None:
+            return
+        try:
+            self._file.write(line + "\n")
+            self._file.flush()
+        except OSError:
+            self._file = None
+
+    def say(self, text: str = "") -> None:
+        print(text, flush=True)
+        self._write(text)
+
+    def close(self) -> None:
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+
 def _state_printer(labels: dict[str, str]):
     """Print what the safety hotkeys did, so the console shows the state."""
 
-    def report(state: str) -> None:
-        if state == "paused":
+    def report(state: str, reason: str = "") -> None:
+        # A ``run`` step is a separate process: it reads this file to know that
+        # Alt+P paused the run and Alt+T stopped it.
+        write_state(state, reason)
+        if str(getattr(state, "value", state)) == "paused":
             print(f"  paused - press {labels['resume']} to continue")
-        elif state == "running":
+        elif str(getattr(state, "value", state)) == "running":
             print("  running")
-        elif state == "stopped":
+        elif str(getattr(state, "value", state)) == "stopped":
             print("  stopped")
 
     return report
@@ -518,6 +558,7 @@ def run_automation_command(
     saved_already: bool = False,
     not_saved: bool = False,
     restart: bool = False,
+    from_screen: bool = False,
     overlay: bool = True,
     env_path: str | None = None,
 ) -> int:
@@ -528,7 +569,7 @@ def run_automation_command(
     from core.safety.overlay import NullOverlay, StatusOverlay
     from desktop.screenshots.capture import CaptureError
     from desktop.uia.uia import UIAError
-    from desktop.windows.window import WindowError
+    from desktop.windows.window import WindowError, release_pinned_windows
     from execution.verification.confirmation import GeminiTextReader, TextConfirmation
     from desktop.app.launch import LaunchError, ensure_running
     from desktop.state.fact import is_fact
@@ -549,23 +590,28 @@ def run_automation_command(
         print(f"ERROR: {exc}")
         return 2
 
+    transcript = _Transcript(name)
+    say = transcript.say
+
     started = False
     try:
         if is_fact(config.app):
             started = ensure_running(output=print)
     except LaunchError as exc:
-        print(f"ERROR: {exc}")
+        say(f"ERROR: {exc}")
+        transcript.close()
         return 2
     if started:
-        print("  FACT was started for this run")
+        say("  FACT was started for this run")
 
     try:
         values, rows = load_values_with_rows(values_path)
     except Exception as exc:  # noqa: BLE001 - any read problem is the same answer
-        print(f"ERROR: {exc}")
+        say(f"ERROR: {exc}")
+        transcript.close()
         return 2
     if rows:
-        print(
+        say(
             f"  one document: {len(rows)} line row(s), saved once at the end"
         )
 
@@ -602,23 +648,37 @@ def run_automation_command(
             saved_already=saved_already,
             not_saved=not_saved,
             restart=restart,
+            from_screen=from_screen,
             confirmation=confirmation,
             controller=controller,
+            output=say,
         )
-        print()
-        print(f"Outcome: {run.status} ({name})")
+        say()
+        say(f"Outcome: {run.status} ({name})")
         if run.message:
-            print(f"  {run.message}")
+            say(f"  {run.message}")
         for shot in run.screenshots:
-            print(f"  evidence: {shot}")
+            say(f"  evidence: {shot}")
+        say(f"  log: {transcript.path}")
         return run.exit_code
     except (AutomationError, WindowError, CaptureError, UIAError, GeminiError, HotkeyError) as exc:
-        print(f"ERROR: {exc}")
+        say(f"ERROR: {exc}")
         return 1
     finally:
-        if controller is not None:
-            controller.close()
-        lock.release()
+        try:
+            if controller is not None:
+                controller.close()
+        finally:
+            try:
+                if config.app.pin_window:
+                    try:
+                        release_pinned_windows(config.app.process_name)
+                    except Exception as exc:  # cleanup must not strand run state or lock
+                        say(f"warning: FACT windows could not be unpinned: {exc}")
+            finally:
+                write_state("idle")          # a finished run must not leave a filler waiting
+                lock.release()
+                transcript.close()
 
 
 def run_register(
@@ -627,6 +687,7 @@ def run_register(
     values_path: str | None = None,
     *,
     dry_run: bool = False,
+    check_save: bool = True,
     overlay: bool = True,
     env_path: str | None = None,
 ) -> int:
@@ -684,6 +745,7 @@ def run_register(
             # The proof runs a ``run`` step for real, so it gets the same file
             # the automation will be given when it is run later.
             values_file=values_path,
+            check_save=check_save,
             write=not dry_run,
         )
     except (
@@ -705,8 +767,12 @@ def run_register(
         print("Checkpoints proved by the run:")
         for line in describe_checkpoints(result.automation):
             print(f"  {line}")
-        print(f"  save: {result.automation.save.button!r} "
-              f"({result.automation.save.verifier} check)")
+        check = (
+            f"{result.automation.save.verifier} check"
+            if result.automation.save.check
+            else "not checked"
+        )
+        print(f"  save: {result.automation.save.button!r} ({check})")
     if result.path is not None:
         print(f"  automation: {result.path}")
     if result.launcher is not None:
@@ -1236,6 +1302,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="forget the last run and enter the record from the beginning",
     )
+    automation_run.add_argument(
+        "--from-screen",
+        dest="from_screen",
+        action="store_true",
+        help=(
+            "start at the step whose screen FACT is showing, instead of at the "
+            "first step (e.g. the form is already open, so just fill it)"
+        ),
+    )
     automation_run.add_argument("--no-overlay", action="store_true")
 
     automation_register = automation_sub.add_parser(
@@ -1262,6 +1337,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "prove the steps (one record is still saved) without writing the "
             "automation"
+        ),
+    )
+    automation_register.add_argument(
+        "--no-save-check",
+        dest="no_save_check",
+        action="store_true",
+        help=(
+            "do not prove or check the save: runs click Save and finish (for an "
+            "app that refuses to write, such as a trial build)"
         ),
     )
     automation_register.add_argument("--no-overlay", action="store_true")
@@ -1391,6 +1475,7 @@ def main(argv: list[str] | None = None) -> int:
                 saved_already=args.saved_already,
                 not_saved=args.not_saved,
                 restart=args.restart,
+                from_screen=args.from_screen,
                 overlay=not args.no_overlay,
                 env_path=env_path,
             )
@@ -1400,6 +1485,7 @@ def main(argv: list[str] | None = None) -> int:
                 config_path,
                 args.sub_values,
                 dry_run=args.dry_run,
+                check_save=not args.no_save_check,
                 overlay=not args.no_overlay,
                 env_path=env_path,
             )
