@@ -517,6 +517,11 @@ def run_wizard(
     #: an AI step, a designed segment, a script - goes on the end, so "add this
     #: segment, then keep going" is simply the order things were added in.
     steps: list[dict] = []
+    #: The screen each step was written on, position for position with
+    #: ``steps`` - ``None`` where nothing was watching (a script, a segment).
+    #: Registration proves what is left of the plan from the screen FACT shows,
+    #: so it has to know where the earlier steps belong.
+    authored_states: list[str | None] = []
     #: Only for refusing the same segment twice; the plan holds its steps.
     chosen_segments: list[str] = []
     labels: dict[str, str] = {}
@@ -621,6 +626,7 @@ def run_wizard(
                     default=" ".join(DEFAULT_SCRIPT_ARGS),
                 )
                 steps.append(script_step(entry, args=raw.split()))
+                authored_states.append(None)
                 print(
                     f"  {name!r} runs here, after the {len(steps) - 1} step(s) "
                     "above it. It types into the form itself and never clicks Save."
@@ -639,7 +645,9 @@ def run_wizard(
                 continue
             # Its steps join the plan here, in this order, so anything added
             # next runs after them - which is the whole point of inserting it.
-            steps.extend(_segment_steps(segment))
+            added = _segment_steps(segment)
+            steps.extend(added)
+            authored_states.extend([None] * len(added))
             for field in segment.fields:
                 labels.setdefault(field.name, field.field)
                 types.setdefault(field.name, field.type)
@@ -679,6 +687,7 @@ def run_wizard(
                     "timeout_seconds": 900.0,
                 }
             )
+            authored_states.append(None)
             print(
                 f"  {script!r} will run here, after the {len(steps) - 1} step(s) "
                 "above it. It types into the form itself and never clicks Save."
@@ -795,17 +804,35 @@ def run_wizard(
             print(f"  note: {note}")
         if result.problems:
             print(f"  The screen did not take that: {'; '.join(result.problems)}")
-            print(
-                "  The form is left as it is; fix it by hand and add the "
-                "step again."
-            )
+            if plan.kind in ("click", "double_click") and "save" in str(
+                plan.label
+            ).casefold():
+                # The click did happen; what followed was the app answering it.
+                # Saving is not a step to add - and a plan that carried it would
+                # save the record twice.
+                print(
+                    "  Save is not a step you add: it is clicked once, after "
+                    "your last step. Clear the box the app put up (if any) and "
+                    "carry on adding what comes before it."
+                )
+            else:
+                print(
+                    "  The form is left as it is; fix it by hand and add the "
+                    "step again."
+                )
             continue
 
         live_values.update(step_values)
+        # The screen this step ran on, kept for registration: it is what lets a
+        # proof start where the app is instead of replaying the plan from its
+        # first step, which the app has already left behind.
+        authored = live.match.state_id
         if plan.kind in ("click", "double_click"):
             steps.append({"action": plan.kind, "button": plan.label})
+            authored_states.append(authored)
         elif plan.kind == "key":
             steps.append({"action": "key", "keys": plan.keypress})
+            authored_states.append(authored)
         else:
             for fill in plan.fills:
                 labels.setdefault(fill.key, fill.label)
@@ -816,6 +843,7 @@ def run_wizard(
                         "field": fill.label,
                     }
                 )
+                authored_states.append(authored)
         print(f"[ OK ] Step {index} done on the live screen.")
 
     print()
@@ -823,6 +851,9 @@ def run_wizard(
     # saves. The button the AI chose is taken out of the steps and becomes the
     # save action, which the runner clicks exactly once, after the last step.
     save_button, steps, dropped = _take_save_step(steps)
+    if dropped and len(authored_states) == len(steps) + 1:
+        # The save click left the plan, so its screen leaves with it.
+        authored_states.pop()
     if dropped:
         print(
             f"  Save is the last step of the plan ({save_button!r}); it is clicked "
@@ -873,10 +904,25 @@ def run_wizard(
 
         name = _prompt("  Automation name", default="fact_automation").strip()
         print()
+        # Answer no when the app refuses to save the record (a trial build, a
+        # read-only database): the steps are still worth keeping, and there is
+        # nothing a save check could ever confirm.
+        check_save = _prompt_yes_no(
+            "  Should a run check that Save actually saved the record?",
+            default_yes=True,
+        )
+        if not check_save:
+            print(
+                "  Save will be clicked and not checked, so a run finishes as "
+                "soon as it clicks."
+            )
+        print()
         result = register_automation(
             name=name,
             config_path=config_file,
             values=live_values,
+            check_save=check_save,
+            authored_states=authored_states,
             # A ``run`` step in the plan is proved for real, so it gets the
             # same values file every later run will be given.
             values_file=values_path,

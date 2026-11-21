@@ -63,6 +63,32 @@ def write_config(tmp_path: Path, **overrides: Any) -> Path:
     return path
 
 
+def authored_plan() -> dict:
+    """A plan whose opening click is on a screen the app has left behind.
+
+    This is the shape the wizard produces: navigate, open the form, type into
+    it, then save - written while the person walked the live app, so by the
+    time it is registered FACT is already deep inside.
+    """
+    return workflow(
+        workflow={
+            "steps": [
+                {"action": "click", "button": "Open"},
+                {"action": "click", "button": "&Add"},
+                {"action": "fill", "key": "customer"},
+                {"action": "click", "button": "Save"},
+            ],
+            "pause_after_click_seconds": 0,
+        }
+    )
+
+
+def write_plan(tmp_path: Path) -> Path:
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(authored_plan()), encoding="utf-8")
+    return path
+
+
 def table(*ids: str) -> StateTable:
     return StateTable.model_validate(
         {
@@ -238,6 +264,30 @@ def test_a_checkpoint_for_every_step_is_required() -> None:
         assign_checkpoints(draft, ["04_view"])
 
 
+def test_a_step_starts_from_the_screen_it_was_written_on() -> None:
+    draft = draft_automation(
+        config(),
+        name=NAME,
+        entry_state="05_add",
+        # Exactly what the wizard watched: position for position with the
+        # config's steps, which is why the Save click at the end lines up.
+        states=["03_entry", "04_view", None],
+    )
+
+    assert [step.checkpoint.state for step in draft.steps] == [
+        "03_entry",
+        "04_view",
+    ]
+
+
+def test_an_unwatched_step_falls_back_to_the_screen_showing_now() -> None:
+    draft = draft_automation(
+        config(), name=NAME, entry_state="05_add", states=[None, None, None]
+    )
+
+    assert [step.checkpoint.state for step in draft.steps] == ["05_add", "05_add"]
+
+
 def test_describe_checkpoints_names_the_screen_of_each_step() -> None:
     draft = draft_automation(config(), name=NAME, entry_state="04_view")
     assign_checkpoints(draft, ["04_view", "05_add"])
@@ -361,6 +411,105 @@ def test_a_proof_that_stops_early_registers_nothing(tmp_path: Path) -> None:
     assert not (tmp_path / "automations").exists()
 
 
+def recorded(seen: list[str], **options: Any) -> Executor:
+    """An executor that remembers which steps it was asked to run."""
+
+    class Recorder(Executor):
+        def __call__(self, steps: list, values: dict, **kw: Any) -> PlanResult:
+            seen.extend(type(step).__name__ for step in steps)
+            return super().__call__(steps, values, **kw)
+
+    return Recorder(**options)
+
+
+def test_the_proof_starts_at_the_step_the_screen_belongs_to(tmp_path: Path) -> None:
+    """Authoring already clicked the opening steps, so the proof need not."""
+    seen: list[str] = []
+    live = Screen("04_view")
+
+    result = go(
+        tmp_path,
+        screen=live,
+        executor=recorded(seen, screen=live, states=["04_view", "05_add"]),
+        config_path=write_plan(tmp_path),
+        states=("02_welcome", "04_view", "05_add"),
+        authored_states=["02_welcome", "04_view", "05_add", None],
+    )
+
+    assert result.status == REGISTERED
+    assert seen == ["ClickStep", "FillStep"], "'Open' is not clicked a second time"
+    # The step before the start keeps what was seen while it was authored; the
+    # steps that ran keep what the proof saw.
+    assert [step.checkpoint.state for step in result.automation.steps] == [
+        "02_welcome",
+        "04_view",
+        "05_add",
+    ]
+
+
+def test_a_proof_on_the_opening_screen_runs_the_whole_plan(tmp_path: Path) -> None:
+    seen: list[str] = []
+    live = Screen("02_welcome")
+
+    result = go(
+        tmp_path,
+        screen=live,
+        executor=recorded(
+            seen, screen=live, states=["02_welcome", "04_view", "05_add"]
+        ),
+        config_path=write_plan(tmp_path),
+        states=("02_welcome", "04_view", "05_add"),
+        authored_states=["02_welcome", "04_view", "05_add", None],
+    )
+
+    assert result.status == REGISTERED
+    assert seen == ["ClickStep", "ClickStep", "FillStep"]
+
+
+def test_the_proof_never_starts_on_a_fill_it_would_type_twice(
+    tmp_path: Path,
+) -> None:
+    seen: list[str] = []
+    live = Screen("05_add")
+
+    result = go(
+        tmp_path,
+        screen=live,
+        executor=recorded(
+            seen, screen=live, states=["02_welcome", "04_view", "05_add"]
+        ),
+        config_path=write_plan(tmp_path),
+        states=("02_welcome", "04_view", "05_add"),
+        authored_states=["02_welcome", "04_view", "05_add", None],
+    )
+
+    assert result.status == REGISTERED
+    assert seen == ["ClickStep", "ClickStep", "FillStep"], (
+        "a fill is never resumed in place"
+    )
+
+
+def test_a_step_without_a_recorded_screen_is_never_skipped(tmp_path: Path) -> None:
+    """A script or a segment was never watched, so the proof has to replay it."""
+    seen: list[str] = []
+    live = Screen("04_view")
+
+    result = go(
+        tmp_path,
+        screen=live,
+        executor=recorded(
+            seen, screen=live, states=["02_welcome", "04_view", "05_add"]
+        ),
+        config_path=write_plan(tmp_path),
+        states=("02_welcome", "04_view", "05_add"),
+        # The first step has no screen: nothing watched it being written.
+        authored_states=[None, "04_view", "05_add", None],
+    )
+
+    assert result.status == REGISTERED
+    assert seen == ["ClickStep", "ClickStep", "FillStep"]
+
+
 def test_the_proof_saves_once_at_the_end(tmp_path: Path) -> None:
     saver = Save()
 
@@ -459,3 +608,51 @@ def test_the_default_footprint_is_read_from_the_proof_screens(tmp_path: Path) ->
     assert result.status == REGISTERED
     stored = registry.load(NAME, tmp_path / "automations")
     assert stored.save.footprint == ["customer"], "the value that appeared is the footprint"
+
+
+# ------------------------------------------------- saving without a save check --
+def test_the_save_check_can_be_turned_off(tmp_path: Path) -> None:
+    # The trial build refuses to write, so there is nothing to prove: the steps
+    # are proved and Save is described but never checked.
+    saver = Save()
+
+    result = go(tmp_path, save=saver, check_save=False)
+
+    assert result.status == REGISTERED
+    assert saver.calls == 0, "a save that cannot be confirmed is not attempted"
+    assert result.automation is not None
+    assert result.automation.save.check is False
+    assert result.automation.save.verifier == "none"
+    assert result.automation.save.footprint == []
+    assert result.automation.verified is False
+
+    stored = registry.load(NAME, tmp_path / "automations")
+    assert stored.save.check is False
+    assert stored.save.button == "Save", "the click is still part of the plan"
+
+
+def test_the_steps_are_still_proved_without_a_save_check(tmp_path: Path) -> None:
+    result = go(tmp_path, check_save=False)
+
+    assert result.automation is not None
+    assert [step.checkpoint.state for step in result.automation.steps] == [
+        "04_view",
+        "05_add",
+    ]
+    assert result.steps_run == 2
+    assert result.checkpoints == ("04_view", "05_add")
+
+
+def test_a_half_run_still_refuses_to_register_without_a_save_check(tmp_path: Path) -> None:
+    result = go(tmp_path, executor=Executor(stop_after=1), check_save=False)
+
+    assert result.status == FAILED
+    assert not (tmp_path / "automations" / NAME / "automation.json").exists()
+
+
+def test_the_save_check_is_on_unless_it_is_turned_off(tmp_path: Path) -> None:
+    result = go(tmp_path)
+
+    assert result.automation is not None
+    assert result.automation.save.check is True
+    assert result.automation.verified is True
