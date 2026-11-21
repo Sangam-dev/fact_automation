@@ -187,11 +187,20 @@ def script_command(
     target = Path(script)
     if not target.is_absolute():
         target = base / target
-    if script.endswith(".py"):
+    if target.suffix.casefold() == ".py":
         if not target.is_file():
-            return [], f"there is no script at {target}"
+            return [], (
+                f"there is no script at {target}; the registered deterministic "
+                "form filler is unavailable"
+            )
+        # Use the interpreter running the automation, not PATH's `python`.
+        # This keeps the filler in the same environment as the launcher and
+        # prevents a second Python installation from silently changing GUI or
+        # dependency behaviour.
         return [sys.executable, str(target), *args], ""
-    return [script, *args], ""
+    if not target.is_file():
+        return [], f"there is no script at {target}"
+    return [str(target), *args], ""
 
 
 def run_script(
@@ -199,11 +208,14 @@ def run_script(
     *,
     timeout_seconds: float,
     cwd: str | Path | None = None,
+    output: Callable[[str], None] = print,
 ) -> tuple[bool, str]:
     """Run one script step: ``(failed, detail)``, never raising on its failure.
 
     A plan that cannot see why a script refused to work is a plan somebody
-    debugs by hand, so the script's own last lines come back as the detail.
+    debugs by hand, so the script's own last lines come back as the detail and
+    every line it printed goes to ``output`` - the run log is where a failure is
+    read afterwards, and there the beginning matters as much as the end.
     """
     try:
         done = subprocess.run(
@@ -227,6 +239,8 @@ def run_script(
         for line in f"{done.stdout or ''}\n{done.stderr or ''}".splitlines()
         if line.strip()
     ]
+    for line in lines:
+        output(f"  | {line}")
     tail = " | ".join(lines[-SCRIPT_OUTPUT_TAIL:])
     if done.returncode != 0:
         return True, f"it exited with code {done.returncode}" + (
@@ -389,6 +403,7 @@ def execute_form_steps(
                 command,
                 timeout_seconds=step.timeout_seconds,
                 cwd=script_cwd,
+                output=output,
             )
             if failed:
                 message = f"step {index} (run {step.script!r}): {detail}"

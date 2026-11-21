@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Iterable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from core.config import AgentConfig, AppConfig, FieldConfig
+from core.config import AgentConfig, AppConfig, FieldConfig, project_root
 
 AUTOMATION_SCHEMA = "automation/1"
 
@@ -190,6 +191,10 @@ class SaveSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     button: str = "Save"
+    #: Whether a run checks that the record actually landed. Turned off for an
+    #: app whose save cannot be proved (a trial that refuses to write): the run
+    #: then clicks Save and reports the record as done without looking for it.
+    check: bool = True
     verifier: Literal["text", "row", "none"] = "row"
     footprint: list[str] = Field(default_factory=list)
     success_pattern: str = ""
@@ -332,6 +337,43 @@ class Automation(BaseModel):
 
     def repeats_per_row(self) -> bool:
         return any(step.per_row for step in self.steps)
+
+    def fills_rows_itself(self) -> bool:
+        """Whether a step enters the line items from the values file itself.
+
+        A ``run`` step handed ``{values_file}`` reads the whole document, lines
+        included - the form filler does - so such a plan needs no per-row
+        steps, and a document with rows is not a mismatch.
+        """
+        return any(
+            step.action == "run" and "{values_file}" in step.args
+            for step in self.steps
+        )
+
+    def validate_scripts(self, root: str | Path | None = None) -> None:
+        """Fail before touching the application when a script cannot run.
+
+        A script step is part of the registered workflow, not an optional file
+        discovered at run time. Resolving relative paths here also makes the
+        generated launcher independent of the directory it was double-clicked
+        from. Absolute paths remain supported for existing external fillers.
+        """
+        base = project_root() if root is None else Path(root)
+        missing: list[str] = []
+        for step in self.steps:
+            if step.action != "run" or not step.script:
+                continue
+            path = Path(step.script)
+            if not path.is_absolute():
+                path = base / path
+            if not path.is_file():
+                missing.append(f"step {step.id!r}: {path}")
+        if missing:
+            raise AutomationError(
+                "the automation references unavailable script file(s): "
+                + "; ".join(missing)
+                + ". Restore the deterministic filler or register it again."
+            )
 
     def validate_states(self, known: Iterable[str]) -> None:
         """Fail if a checkpoint names a screen the recogniser does not know.

@@ -116,6 +116,9 @@ def load(name: str, root: str | Path | None = None) -> Automation:
             f"{path} is named {automation.name!r} but lives in {canonical!r}; "
             "the file name and the automation name must agree"
         )
+    # Do this at load time, before FACT is attached or any click is made. A
+    # missing filler used to look like a form/input problem after navigation.
+    automation.validate_scripts()
     return automation
 
 
