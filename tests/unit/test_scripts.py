@@ -123,5 +123,7 @@ def test_the_projects_own_filler_is_in_the_library() -> None:
     # The pre-written fillers live in one folder, and the menu is that folder.
     scripts = find_scripts()
 
-    assert "form_filler_1" in [entry.id for entry in scripts]
+    script_ids = [entry.id for entry in scripts]
+    assert "form_filler_1" in script_ids
+    assert "_form_filler_template" not in script_ids
     assert get_script("form_filler_1").path == "execution/scripts/form_filler_1.py"

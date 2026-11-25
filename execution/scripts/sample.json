@@ -1,0 +1,29 @@
+{
+  "header": {
+    "proforma_no": "TEST",
+    "customer_order_no": "2222",
+    "currency": "NPR",
+    "customer_code": "CE-1008",
+    "document_class": "F"
+  },
+  "lines": [
+    {
+      "product_code": "FG-0001",
+      "quantity": 1000,
+      "unitcode": "BAG",
+      "rate": 0
+    },
+    {
+      "product_code": "FG-0001",
+      "quantity": 1000,
+      "unitcode": "MT",
+      "rate": 0
+    },
+    {
+      "product_code": "FG-0001",
+      "quantity": 1001,
+      "unitcode": "MT",
+      "rate": 0
+    }
+  ]
+}

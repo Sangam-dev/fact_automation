@@ -11,6 +11,6 @@
   "lines": [
     { "product_code": "BRM-003", "quantity": 1000, "rate": 100 },
     { "product_code": "BRM-003", "quantity": 1000, "rate": 100 },
-    { "product_code": "BRM-003", "quantity": 1000, "rate": 100 }
+    { "product_code": "BRM-003", "quantity": 1001, "rate": 200 }
   ]
 }

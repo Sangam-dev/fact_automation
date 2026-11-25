@@ -35,9 +35,23 @@ HEADER = [
     ("document_class",         "peClass",      0, "txtClassDesc"),
     ("expected_delivery_date", "NepDateEdit",  3, None),
 ]
+
+# Website/sample payload keys -> the stable keys used by this form filler.
+# Confirm these meanings against the source system before changing the mapping.
+HEADER_ALIASES = {
+    "quotation_no": "proforma_no",
+    "order_no": "customer_order_no",
+    "due_date": "expected_delivery_date",
+    "customer_id": "customer_code",
+    "salesman_id": "salesman_code",
+}
+
+# These are the UOM codes present in the sample and the exact labels in FACT.
+UOM_OPTIONS = {"BAG": "Bags", "MT": "MT"}
 SETTLE = 0.6          # seconds without any pop-up before a lookup field counts as done
 MIN_WAIT = 0.8        # always give a wrong-code pop-up this long to appear after Tab
 LOOKUP_TIMEOUT = 60   # product lookups can take 13 s on a good day
+QUANTITY_DIALOG_TIMEOUT = 20
 
 
 class Stop(Exception):
@@ -101,25 +115,70 @@ def num(s):
         return None
 
 
+def normalize(order):
+    """Convert supported payload shapes into the filler's header/lines shape."""
+    if not isinstance(order, dict):
+        raise Stop("the JSON root must be an object")
+
+    source_header = order.get("header")
+    if source_header is None:
+        source_header = {
+            key: value
+            for key, value in order.items()
+            if key not in {"lines", "items"}
+        }
+    if not isinstance(source_header, dict):
+        raise Stop("'header' must be a JSON object")
+
+    header = {}
+    for source_key, value in source_header.items():
+        key = HEADER_ALIASES.get(source_key, source_key)
+        if key in header:
+            raise Stop(
+                f"multiple input fields map to header field {key!r}; "
+                "resolve the duplicate before filling"
+            )
+        header[key] = value
+
+    if "lines" in order and "items" in order:
+        raise Stop("provide either 'lines' or 'items', not both")
+    lines = order["lines"] if "lines" in order else order.get("items")
+
+    return {"header": header, "lines": lines}
+
+
 def check(order):
     errs = []
-    header = order.get("header")
-    if header is None:
-        header = {k: v for k, v in order.items() if k != "lines"}
+    try:
+        order = normalize(order)
+    except Stop as exc:
+        return {}, [], [str(exc)]
+
+    header = order["header"]
     known = {h[0] for h in HEADER}
-    for k in header:
-        if k not in known:
-            errs.append(f"header: unknown field '{k}' (known: {sorted(known)})")
+    for key in header:
+        if key not in known:
+            errs.append(f"header: unknown field '{key}' (known: {sorted(known)})")
+
     lines = order.get("lines")
     if not isinstance(lines, list) or not lines:
-        errs.append("'lines' must be a non-empty list")
+        errs.append("'lines' or 'items' must be a non-empty list")
         lines = []
-    for i, ln in enumerate(lines, 1):
-        if not str(ln.get("product_code", "")).strip():
+    for i, line in enumerate(lines, 1):
+        if not isinstance(line, dict):
+            errs.append(f"line {i}: expected an object")
+            continue
+        if not str(line.get("product_code", "")).strip():
             errs.append(f"line {i}: product_code missing")
-        if num(ln.get("quantity")) is None or num(ln["quantity"]) <= 0:
+        quantity = num(line.get("quantity"))
+        if quantity is None or quantity <= 0:
             errs.append(f"line {i}: quantity must be a number > 0")
-        if "rate" in ln and num(ln["rate"]) is None:
+        unit_code = str(line.get("unitcode", "")).strip().upper()
+        if unit_code not in UOM_OPTIONS:
+            errs.append(
+                f"line {i}: unitcode must be one of {sorted(UOM_OPTIONS)}"
+            )
+        if "rate" in line and num(line["rate"]) is None:
             errs.append(f"line {i}: rate is not a number")
     return header, lines, errs
 
@@ -144,6 +203,12 @@ def _top_windows():
         return True
     user32.EnumWindows(cb_t(cb), 0)
     return out
+
+
+def _window_process_id(hwnd):
+    process_id = wt.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+    return int(process_id.value)
 
 
 def message_box_open():
@@ -217,6 +282,134 @@ class Form:
             pass
         return c.window_text()
 
+    def wait_for_quantity_dialog(self):
+        """Find the modal by native HWND, then attach to it through UI Automation."""
+        deadline = time.monotonic() + QUANTITY_DIALOG_TIMEOUT
+        try:
+            process_id = int(self.win.element_info.process_id)
+            form_pid_detail = str(process_id)
+        except Exception as exc:
+            process_id = None
+            form_pid_detail = f"unavailable ({type(exc).__name__}: {exc})"
+
+        last_candidates = []
+        enumeration_error = None
+
+        while time.monotonic() < deadline:
+            obey_hotkeys("waiting for the quantity/UOM window")
+            matches = []
+            last_candidates = []
+            enumeration_error = None
+            try:
+                windows = _top_windows()
+            except Exception as exc:
+                windows = []
+                enumeration_error = f"{type(exc).__name__}: {exc}"
+
+            for hwnd, title, class_name, _, _ in windows:
+                title = title.strip()
+                window_pid = _window_process_id(hwnd)
+                if "quantity" in title.casefold() or title == "Enter Quantity":
+                    details = (
+                        f"title={title!r}, class={class_name!r}, "
+                        f"pid={window_pid}, hwnd={int(hwnd)}"
+                    )
+                    rejected = []
+                    if title != "Enter Quantity":
+                        rejected.append("title is not exactly 'Enter Quantity'")
+                    if process_id is None:
+                        rejected.append(f"Sale Order PID unavailable ({form_pid_detail})")
+                    elif window_pid != process_id:
+                        rejected.append(f"window PID does not match Sale Order PID {process_id}")
+
+                    if rejected:
+                        last_candidates.append(
+                            f"{details}; rejected: {', '.join(rejected)}"
+                        )
+                        continue
+
+                    try:
+                        window = self.desk.window(handle=int(hwnd)).wrapper_object()
+                        automation_id = window.element_info.automation_id or ""
+                        visible = window.is_visible()
+                    except Exception as exc:
+                        last_candidates.append(
+                            f"{details}; UIA attach/read failed: "
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                        continue
+
+                    if automation_id != "frmMultUOM":
+                        last_candidates.append(
+                            f"{details}, automation_id={automation_id!r}; "
+                            "rejected: Automation ID is not 'frmMultUOM'"
+                        )
+                    elif not visible:
+                        last_candidates.append(
+                            f"{details}, automation_id={automation_id!r}; "
+                            "rejected: UIA reports the window is not visible"
+                        )
+                    else:
+                        matches.append(window)
+                        last_candidates.append(
+                            f"{details}, automation_id={automation_id!r}, "
+                            "visible=True; all checks passed"
+                        )
+
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                raise Stop("more than one matching Enter Quantity window is open")
+            time.sleep(0.15)
+
+        diagnostic = [f"Sale Order PID: {form_pid_detail}."]
+        if enumeration_error:
+            diagnostic.append(f"Could not enumerate native windows: {enumeration_error}.")
+        if last_candidates:
+            diagnostic.append("Quantity-like native window(s): " + " | ".join(last_candidates))
+        else:
+            diagnostic.append(
+                "No visible native top-level window with 'Quantity' in its title "
+                "was found."
+            )
+
+        raise Stop(
+            "the Enter Quantity window was not accepted; nothing was entered. "
+            + " ".join(diagnostic)
+        )
+
+
+def dialog_control(window, automation_id, control_type=None):
+    matches = [
+        control
+        for control in window.descendants()
+        if (control.element_info.automation_id or "") == automation_id
+        and (control_type is None or control.element_info.control_type == control_type)
+    ]
+    if len(matches) != 1:
+        suffix = f" ({control_type})" if control_type else ""
+        raise Stop(
+            f"quantity window control {automation_id!r}{suffix} "
+            f"matched {len(matches)} controls; expected exactly one"
+        )
+    return matches[0]
+
+
+def control_value(control):
+    try:
+        value = control.iface_value.CurrentValue
+        if value is not None:
+            return str(value)
+    except Exception:
+        pass
+    return str(control.window_text() or "")
+
+
+def uom_label(value):
+    """Extract the selected UOM from FACT's numbered combo/list label."""
+    label = re.sub(r"^\s*\d+\.\s*", "", str(value or ""), count=1)
+    return label.split("(", 1)[0].strip()
+
 
 def settle(what, quiet=None, minwait=None):
     """Wait until FACT is quiet. A Message Box means FACT refused the value."""
@@ -267,6 +460,104 @@ def focused_text():
     except Exception:
         pass
     return w.window_text()
+
+
+def fill_quantity_dialog(f, row, line):
+    """Fill the quantity and UOM popup opened by the line grid."""
+    unit_code = str(line["unitcode"]).strip().upper()
+    expected_unit = UOM_OPTIONS.get(unit_code)
+    if expected_unit is None:
+        raise Stop(f"line {row + 1}: unsupported unitcode {unit_code!r}")
+
+    dialog = f.wait_for_quantity_dialog()
+    product_code = control_value(dialog_control(dialog, "TxtProdcode"))
+    expected_product = str(line["product_code"]).strip()
+    if norm(product_code) != norm(expected_product):
+        raise Stop(
+            f"line {row + 1}: quantity window is for product {product_code!r}, "
+            f"not {expected_product!r}; nothing was entered"
+        )
+
+    quantity = str(line["quantity"]).strip()
+    quantity_field = dialog_control(dialog, "TxtQuantity", "Edit")
+    if not quantity_field.is_enabled():
+        raise Stop(f"line {row + 1}: quantity field is not editable")
+    agent_click(quantity_field, dialog, f"focusing quantity for line {row + 1}")
+    time.sleep(0.1)
+    agent_replace_text(quantity, f"entering quantity for line {row + 1}")
+    agent_press("Tab", f"committing quantity for line {row + 1}")
+    time.sleep(0.15)
+    actual_quantity = control_value(quantity_field)
+    if num(actual_quantity) != num(quantity):
+        raise Stop(
+            f"line {row + 1}: quantity window shows {actual_quantity!r}, "
+            f"expected {quantity!r}"
+        )
+
+    options = []
+    for item in dialog.descendants(control_type="ListItem"):
+        raw_label = str(item.element_info.name or item.window_text() or "")
+        if norm(uom_label(raw_label)) == norm(expected_unit):
+            options.append(item)
+    if len(options) != 1:
+        raise Stop(
+            f"line {row + 1}: could not uniquely find UOM {expected_unit!r} "
+            f"in the quantity window ({len(options)} matches)"
+        )
+
+    try:
+        options[0].iface_selection_item.Select()
+    except Exception as exc:
+        raise Stop(
+            f"line {row + 1}: FACT did not accept UOM {expected_unit!r}: {exc}"
+        ) from exc
+
+    uom_control = dialog_control(dialog, "peUOM", "ComboBox")
+    unit_deadline = time.monotonic() + 3.0
+    selected_label = control_value(uom_control)
+    actual_unit = uom_label(selected_label)
+    while norm(actual_unit) != norm(expected_unit) and time.monotonic() < unit_deadline:
+        obey_hotkeys(f"waiting for UOM on line {row + 1}")
+        time.sleep(0.1)
+        selected_label = control_value(uom_control)
+        actual_unit = uom_label(selected_label)
+    if norm(actual_unit) != norm(expected_unit):
+        raise Stop(
+            f"line {row + 1}: UOM selector shows {selected_label!r}, "
+            f"expected a selection of {expected_unit!r}"
+        )
+
+    ok = dialog_control(dialog, "btnOK")
+    agent_click(ok, dialog, f"confirming quantity for line {row + 1}")
+    close_deadline = time.monotonic() + 10.0
+    while time.monotonic() < close_deadline:
+        obey_hotkeys(f"waiting for quantity window to close on line {row + 1}")
+        try:
+            if dialog.is_visible():
+                time.sleep(0.1)
+                continue
+        except Exception:
+            pass
+
+        settle(f"line {row + 1} quantity")
+        actual_grid_uom = f.cell_value("UOM", row)
+        if actual_grid_uom is None:
+            raise Stop(
+                f"line {row + 1}: quantity window closed, but the committed "
+                "UOM cell could not be read from the order grid"
+            )
+        if norm(str(actual_grid_uom)) != norm(expected_unit):
+            raise Stop(
+                f"line {row + 1}: quantity window closed, but the order grid "
+                f"shows UOM {actual_grid_uom!r}, expected {expected_unit!r}"
+            )
+        print(f"  line {row + 1}: quantity {quantity} {expected_unit}")
+        return
+
+    raise Stop(
+        f"line {row + 1}: quantity window did not close after OK; "
+        "the line was not continued"
+    )
 
 
 def keyed(f, i, col, key, value):
@@ -370,18 +661,22 @@ def fill(order):
             raise Stop(f"line {i + 1}: typed product_code '{code}' but the grid shows '{got}'")
         if not norm(f.cell_value("Product Description", i)):
             raise Stop(f"line {i + 1}: product '{code}' was not recognised (no description)")
-        # 2) the rest by KEYBOARD only: the grid scrolls sideways, so Quantity/Rate may be off-screen
-        #    and cannot be clicked. Focus is on Product Description now.
-        #    Tab -> Quantity, Tab -> Pre-close, Tab -> Rate
-        agent_press("Tab", f"moving to Quantity row {i}")  # description -> quantity
-        time.sleep(0.2)
-        keyed(f, i, "Quantity", "quantity", ln["quantity"])
-        if "rate" in ln and str(ln["rate"]).strip() != "":
-            agent_press("Tab", f"moving to Rate row {i}")  # pre-close -> rate
-            time.sleep(0.2)
+        # Tab from Description opens the quantity/UOM popup. Confirming it
+        # closes the popup and leaves focus directly on Rate.
+        agent_press("Tab", f"opening quantity window for line {i + 1}")
+        fill_quantity_dialog(f, i, ln)
+
+        has_rate = "rate" in ln and str(ln["rate"]).strip() != ""
+        if has_rate:
             keyed(f, i, "Rate", "rate", ln["rate"])
-        if i < len(lines) - 1:                          # not after the last line: no stray empty row
-            next_row(f, i + 1, 7 if "rate" in ln and str(ln["rate"]).strip() != "" else 9)
+        if i < len(lines) - 1:
+            if has_rate:
+                next_row(f, i + 1, 7)
+            else:
+                # Preserve the old navigation starting point: after the modal,
+                # focus is on the blank Rate cell instead of after Quantity.
+                agent_press("Tab", f"skipping empty Rate on line {i + 1}")
+                next_row(f, i + 1, 9)
     print(f"DONE: {len(lines)} line(s) filled and checked. Review the form, then Save by hand.")
 
 
