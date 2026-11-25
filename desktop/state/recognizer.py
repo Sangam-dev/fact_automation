@@ -162,8 +162,17 @@ class Observation:
         )
 
     def deciding_windows(self) -> list[WindowView]:
-        """The windows that can decide a state: titled, topmost first."""
-        return [window for window in self.windows if not window.ignorable]
+        """The active titled window first, then other windows by z-order.
+
+        Pinned sibling windows can appear above the active form in z-order.
+        State recognition should follow the user's/automation's foreground
+        window before considering those siblings.
+        """
+        windows = [window for window in self.windows if not window.ignorable]
+        return sorted(
+            windows,
+            key=lambda window: (not window.is_foreground, window.z_order),
+        )
 
 
 @dataclass(frozen=True)
