@@ -17,6 +17,7 @@ from typing import Iterable, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from core.config import AgentConfig, AppConfig, FieldConfig, project_root
+from execution.actions.models import ProgressWait
 
 AUTOMATION_SCHEMA = "automation/1"
 
@@ -70,6 +71,7 @@ class AutomationStep(BaseModel):
     id: str
     action: Literal["click", "double_click", "fill", "key", "run"]
     button: str | None = None
+    wait_for_progress: ProgressWait | None = None
     key: str | None = None
     field: str | None = None
     #: The keys a ``key`` step presses, e.g. ``"Enter"`` or ``"Ctrl+S"``.
@@ -107,6 +109,8 @@ class AutomationStep(BaseModel):
             object.__setattr__(self, "button", button)
             if self.key or self.field or self.keys:
                 raise ValueError(f"a {self.action} step has no key, field or keys")
+            if self.action == "double_click" and self.wait_for_progress is not None:
+                raise ValueError("progress waits are supported only on click steps")
             self._no_script()
         elif self.action == "key":
             keys = (self.keys or "").strip()
@@ -117,8 +121,13 @@ class AutomationStep(BaseModel):
                     f"{keys!r} names more than one modifier; write it as Ctrl+S"
                 )
             object.__setattr__(self, "keys", keys)
-            if self.button or self.key or self.field:
-                raise ValueError("a key step has no button, key or field")
+            if (
+                self.button
+                or self.key
+                or self.field
+                or self.wait_for_progress is not None
+            ):
+                raise ValueError("a key step has no button, key, field, or progress wait")
             self._no_script()
         elif self.action == "run":
             script = (self.script or "").strip()
@@ -128,7 +137,13 @@ class AutomationStep(BaseModel):
                     '"execution/scripts/form_filler_1.py"'
                 )
             object.__setattr__(self, "script", script)
-            if self.button or self.key or self.field or self.keys:
+            if (
+                self.button
+                or self.key
+                or self.field
+                or self.keys
+                or self.wait_for_progress is not None
+            ):
                 raise ValueError("a run step has no button, key, field or keys")
             if self.per_row:
                 raise ValueError(
@@ -157,8 +172,8 @@ class AutomationStep(BaseModel):
             if not key:
                 raise ValueError("a fill step needs a key naming its value")
             object.__setattr__(self, "key", key)
-            if self.button or self.keys:
-                raise ValueError("a fill step has no button or keys")
+            if self.button or self.keys or self.wait_for_progress is not None:
+                raise ValueError("a fill step has no button, keys, or progress wait")
             if self.field is not None:
                 field = self.field.strip()
                 object.__setattr__(self, "field", field or None)
@@ -403,6 +418,10 @@ class Automation(BaseModel):
             payload: dict = {"action": step.action, "optional": step.optional}
             if step.action in ("click", "double_click"):
                 payload["button"] = step.button
+                if step.wait_for_progress is not None:
+                    payload["wait_for_progress"] = (
+                        step.wait_for_progress.model_dump()
+                    )
             elif step.action == "key":
                 payload["keys"] = step.keys
             elif step.action == "run":

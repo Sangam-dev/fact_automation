@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import pytest
 from PIL import Image
@@ -20,7 +21,7 @@ from core.runtime.errors import RunnerAborted
 from desktop.screenshots.capture import Capture
 from desktop.input.input import InputError
 from desktop.uia.uia import UIAError, UIAInspection
-from execution.actions.models import ClickStep, FillStep
+from execution.actions.models import ClickStep, FillStep, ProgressWait
 from core.config import ConfirmationConfig
 from desktop.types import Rect, UIACandidate, WindowInfo
 
@@ -184,6 +185,112 @@ def test_a_click_is_followed_by_a_fresh_inspection(monkeypatch) -> None:
     assert calls["pastes"] == ["500"]
     assert len(calls["clicks"]) == 2
     assert inspected == [1]
+
+
+def test_a_click_waits_for_a_configured_progress_bar(monkeypatch) -> None:
+    calls = _stub_input(monkeypatch)
+    button = _button("Add")
+
+    def progress_inspection(candidate_id: str, value: str) -> FakeInspection:
+        progress = FakeCandidate(
+            candidate_id=candidate_id,
+            name=value,
+            control_type="ProgressBar",
+            rect=Rect(10, 250, 150, 270),
+            automation_id="pgbar",
+        )
+        return FakeInspection(
+            [button, progress],
+            values={candidate_id: value},
+        )
+
+    screens = iter(
+        [
+            progress_inspection("p0", "0%"),
+            progress_inspection("p1", "100%"),
+            progress_inspection("p2", "100%"),
+            FakeInspection([]),
+        ]
+    )
+    inspected = []
+
+    def inspect_next(_window):
+        inspection = next(screens)
+        inspected.append(inspection)
+        return inspection
+
+    def click_after_ready(x, y, *_args, **_kwargs):
+        assert len(inspected) >= 3
+        calls["clicks"].append((x, y))
+
+    monkeypatch.setattr(form_steps, "inspect_window", inspect_next)
+    monkeypatch.setattr(form_steps, "click_checked", click_after_ready)
+
+    result = execute_form_steps(
+        [
+            ClickStep(
+                action="click",
+                button="Add",
+                wait_for_progress=ProgressWait(
+                    automation_id="pgbar",
+                    target_percent=100,
+                    timeout_seconds=1,
+                    stable_reads=2,
+                ),
+            )
+        ],
+        {},
+        window=_window(),
+        inspection=progress_inspection("initial", "0%"),
+        labels={},
+        types={},
+        pause_after_click=0,
+        sleep=lambda _seconds: None,
+    )
+
+    assert result.ok, result.problems
+    assert result.steps_run == 1
+    assert calls["clicks"] == [(230, 220)]
+
+
+def test_a_click_is_not_sent_when_progress_does_not_finish(monkeypatch) -> None:
+    calls = _stub_input(monkeypatch)
+    button = _button("Add")
+    progress = FakeCandidate(
+        candidate_id="p0",
+        name="0%",
+        control_type="ProgressBar",
+        rect=Rect(10, 250, 150, 270),
+        automation_id="pgbar",
+    )
+    loading = FakeInspection([button, progress], values={"p0": "0%"})
+    monkeypatch.setattr(form_steps, "inspect_window", lambda _window: loading)
+
+    result = execute_form_steps(
+        [
+            ClickStep(
+                action="click",
+                button="Add",
+                wait_for_progress=ProgressWait(
+                    automation_id="pgbar",
+                    timeout_seconds=0.02,
+                    stable_reads=1,
+                ),
+            )
+        ],
+        {},
+        window=_window(),
+        inspection=loading,
+        labels={},
+        types={},
+        pause_after_click=0,
+        sleep=time.sleep,
+    )
+
+    assert not result.ok
+    assert "did not reach 100%" in result.problems[0]
+    assert "'Add' was not clicked" in result.problems[0]
+    assert calls["clicks"] == []
 
 
 def test_a_click_can_hand_the_plan_to_a_new_window(monkeypatch) -> None:

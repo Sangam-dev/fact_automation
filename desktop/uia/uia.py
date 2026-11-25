@@ -27,6 +27,7 @@ _LABEL_TYPES = {
     "ComboBox",
     "Document",
     "Edit",
+    "ProgressBar",
     "Header",
     "HeaderItem",
     "ListItem",

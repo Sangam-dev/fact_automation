@@ -42,11 +42,31 @@ class _Step(BaseModel):
     optional: bool = False
 
 
+class ProgressWait(BaseModel):
+    """A progress-bar condition that must hold before a click is sent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    automation_id: str
+    target_percent: float = Field(default=100.0, ge=0, le=100)
+    timeout_seconds: float = Field(default=120.0, gt=0)
+    stable_reads: int = Field(default=3, ge=1)
+
+    @field_validator("automation_id")
+    @classmethod
+    def _automation_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("progress wait needs an automation id")
+        return value
+
+
 class ClickStep(_Step):
-    """Click a button, matched by its UIA name."""
+    """Click a button, optionally waiting for a UIA progress bar first."""
 
     action: Literal["click"]
     button: str
+    wait_for_progress: ProgressWait | None = None
 
     @field_validator("button")
     @classmethod
@@ -161,5 +181,6 @@ __all__ = [
     "FillStep",
     "FormStep",
     "KeyStep",
+    "ProgressWait",
     "ScriptStep",
 ]

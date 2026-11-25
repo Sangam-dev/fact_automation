@@ -60,6 +60,33 @@ def test_a_double_click_and_a_key_step_survive_a_save_and_a_load() -> None:
     assert again.steps[2].describe() == "3 (key 'Enter')"
 
 
+def test_click_progress_wait_survives_storage_and_runtime_conversion() -> None:
+    plan = _automation(
+        [
+            {
+                "id": "wait-and-add",
+                "action": "click",
+                "button": "&Add",
+                "wait_for_progress": {
+                    "automation_id": "pgbar",
+                    "target_percent": 100,
+                    "timeout_seconds": 120,
+                    "stable_reads": 3,
+                },
+                "checkpoint": _checkpoint(),
+            }
+        ]
+    )
+
+    stored = plan.model_dump(mode="json", by_alias=True)
+    again = Automation.model_validate(stored)
+    runtime_step = again.to_config().workflow.steps[0]
+
+    assert again.steps[0].wait_for_progress.automation_id == "pgbar"
+    assert runtime_step.wait_for_progress.target_percent == 100
+    assert runtime_step.wait_for_progress.stable_reads == 3
+
+
 def test_the_executor_config_keeps_the_same_actions() -> None:
     plan = _automation(
         [

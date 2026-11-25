@@ -13,6 +13,7 @@ value}``); this module never reads a workbook, a row, or a database.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import time
@@ -47,6 +48,7 @@ from execution.actions.models import (
     FillStep,
     FormStep,
     KeyStep,
+    ProgressWait,
     ScriptStep,
 )
 from execution.verification.confirmation import (
@@ -118,6 +120,35 @@ def _wait(controller: SafetyController | None, seconds: float) -> bool:
         return controller.wait(seconds)
     time.sleep(seconds)
     return True
+
+
+def _progress_percent(
+    inspection: UIAInspection, automation_id: str
+) -> tuple[float | None, str]:
+    """Read one live UIA progress value as a percentage."""
+    matches = [
+        candidate
+        for candidate in inspection.candidates
+        if candidate.control_type == "ProgressBar"
+        and candidate.automation_id == automation_id
+    ]
+    if not matches:
+        return None, f"ProgressBar id={automation_id!r} was not found"
+    if len(matches) != 1:
+        return None, f"ProgressBar id={automation_id!r} is ambiguous"
+
+    candidate = matches[0]
+    try:
+        raw = inspection.read_value(candidate.candidate_id)
+    except (UIAError, AttributeError):
+        raw = candidate.value
+    match = re.search(r"[-+]?\d+(?:[.,]\d+)?", str(raw or ""))
+    if match is None:
+        return None, f"ProgressBar id={automation_id!r} has no readable numeric value"
+    try:
+        return float(match.group(0).replace(",", ".")), ""
+    except ValueError:
+        return None, f"ProgressBar id={automation_id!r} has an invalid value {raw!r}"
 
 
 def add_button_labels(workflow: WorkflowConfig) -> list[str]:
@@ -355,6 +386,66 @@ def execute_form_steps(
                 # The window went away while we looked: keep waiting for it.
                 continue
 
+    def wait_for_progress(
+        condition: ProgressWait, step_number: int, button_label: str
+    ) -> bool:
+        """Hold a configured click until its UIA progress bar is complete."""
+        nonlocal inspection
+        deadline = time.monotonic() + condition.timeout_seconds
+        stable_reads = 0
+        last_value: float | None = None
+        last_issue = "no progress reading yet"
+        output(
+            f"  step {step_number}: waiting for progress bar "
+            f"{condition.automation_id!r} to reach {condition.target_percent:g}%"
+        )
+
+        while True:
+            guard.check(f"stopped while waiting for progress before step {step_number}")
+            try:
+                # This is a readiness wait on the existing View window, not a
+                # screen transition. Re-read that exact handle to avoid switching
+                # to another FACT window while its list is still loading.
+                inspection = inspect_window(window)
+            except UIAError as exc:
+                last_issue = str(exc)
+                stable_reads = 0
+            else:
+                last_value, issue = _progress_percent(
+                    inspection, condition.automation_id
+                )
+                if issue:
+                    last_issue = issue
+                if last_value is not None and last_value >= condition.target_percent:
+                    stable_reads += 1
+                    if stable_reads >= condition.stable_reads:
+                        output(
+                            f"  step {step_number}: progress is "
+                            f"{last_value:g}% (ready)"
+                        )
+                        return True
+                else:
+                    stable_reads = 0
+                    if last_value is not None:
+                        last_issue = f"currently {last_value:g}%"
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                current = (
+                    f"last value {last_value:g}%"
+                    if last_value is not None
+                    else last_issue
+                )
+                problems.append(
+                    f"step {step_number}: progress bar "
+                    f"{condition.automation_id!r} did not reach "
+                    f"{condition.target_percent:g}% within "
+                    f"{condition.timeout_seconds:g}s ({current}); "
+                    f"{button_label!r} was not clicked"
+                )
+                return False
+            sleep(min(SETTLE_POLL_SECONDS, remaining))
+
     for index, step in enumerate(steps, start=1):
         if index <= start_index:
             continue
@@ -491,6 +582,19 @@ def execute_form_steps(
         # way, so this is still a precondition.
         if before_step is not None:
             before_step(index, step)
+
+        if isinstance(step, ClickStep) and step.wait_for_progress is not None:
+            if not wait_for_progress(step.wait_for_progress, index, label):
+                break
+            target, warning = resolve_page_target(
+                inspection, label=label, control_types=control_types
+            )
+            if target is None:
+                problems.append(
+                    f"step {index} (click {label!r}): the button was no longer "
+                    "available after the progress bar completed"
+                )
+                break
 
         x, y = target.rect.center
         try:

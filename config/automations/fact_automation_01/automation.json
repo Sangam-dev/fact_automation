@@ -56,6 +56,12 @@
       "id": "04-click-add",
       "action": "click",
       "button": "&Add",
+      "wait_for_progress": {
+        "automation_id": "pgbar",
+        "target_percent": 100,
+        "timeout_seconds": 120,
+        "stable_reads": 3
+      },
       "args": [],
       "optional": false,
       "per_row": false,
