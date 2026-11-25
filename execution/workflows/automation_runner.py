@@ -393,7 +393,21 @@ def run_automation(
         )
 
     try:
-        window = attach(config.app, seconds=wait_seconds)
+        start_state = plan.steps[resume.index].checkpoint.state
+        start_handle = (
+            int(screen.window.handle)
+            if screen.window is not None and screen.window.handle
+            else None
+        )
+        # Keep the window that established the resume decision. FACT often has
+        # multiple pinned top-level windows; a generic reattach could select
+        # the main menu after we chose a form step.
+        window = attach(
+            config.app,
+            seconds=wait_seconds,
+            expected_state=start_state,
+            expected_handle=start_handle,
+        )
         inspection = inspect(window)
     except (FactError, WindowError, UIAError) as exc:
         return AutomationRun(

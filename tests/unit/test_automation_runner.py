@@ -17,7 +17,7 @@ from core.automation import registry
 from core.automation.model import Automation
 from core.config import AgentConfig
 from core.runtime.errors import RunnerAborted
-from desktop.state.recognizer import CLOSED, StateMatch
+from desktop.state.recognizer import CLOSED, StateMatch, WindowView
 from desktop.state.states import StateTable
 from execution.actions.engine import PlanResult
 from execution.verification.confirmation import CONFIRMED, ConfirmationResult
@@ -212,6 +212,7 @@ def go(
     executor: Executor | None = None,
     saver: Any = None,
     clear: ClearForm | None = None,
+    attach_fn: Any = None,
     values: dict | None = None,
     states: tuple[str, ...] = ("04_view", "05_add"),
     **options: Any,
@@ -230,7 +231,7 @@ def go(
         progress_root=progress,
         table=table(*states),
         detector=screen,
-        attach=lambda config, **kwargs: object(),
+        attach=attach_fn or (lambda config, **kwargs: object()),
         inspect=lambda window: object(),
         clear_form=clear,
         execute=executor,
@@ -247,6 +248,34 @@ def save(progress_root: Path, item: store.ProgressState) -> None:
 
 
 # ---------------------------------------------------------------- a fresh run --
+def test_starting_on_a_form_keeps_its_window_for_initial_attach(registered) -> None:
+    class FormScreen(Screen):
+        def __call__(self) -> StateMatch:
+            self.calls += 1
+            return StateMatch(
+                state_id=self.state,
+                window=WindowView(title="Sale Order - Add", handle=42),
+            )
+
+    screen = FormScreen("05_add")
+    attached: dict[str, Any] = {}
+
+    def attach(_config, **kwargs):
+        attached.update(kwargs)
+        return object()
+
+    run, _executor, _saver, _clear = go(
+        registered,
+        screen=screen,
+        attach_fn=attach,
+        from_screen=True,
+    )
+
+    assert run.status == SAVED
+    assert attached["expected_state"] == "05_add"
+    assert attached["expected_handle"] == 42
+
+
 def test_a_fresh_run_saves_the_record(registered) -> None:
     run, executor, saver, _clear = go(registered)
 

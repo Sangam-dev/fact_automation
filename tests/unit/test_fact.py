@@ -57,6 +57,55 @@ def test_wait_for_screen_waits_out_a_transition(monkeypatch) -> None:
     assert match.state_id == "03_entry"
 
 
+def test_wait_for_screen_refocuses_the_window_that_matched_the_start_screen(
+    monkeypatch,
+) -> None:
+    target = _window(handle=8, title="Sale Order - Add")
+    answers = iter([_known("03_entry", 7), _known("05_add", 8)])
+    monkeypatch.setattr(fact, "detect", lambda table, process: next(answers))
+    monkeypatch.setattr(
+        fact, "get_window", lambda handle: target if handle == 8 else _window(handle)
+    )
+    focused: list[int] = []
+    monkeypatch.setattr(
+        fact, "focus_window", lambda window: focused.append(window.handle) or True
+    )
+
+    window, match = fact.wait_for_screen(
+        _table(),
+        config=AppConfig(
+            process_name=fact.FACT_PROCESS,
+            require_foreground=True,
+            pin_window=False,
+        ),
+        expected_state="05_add",
+        expected_handle=8,
+        seconds=0.0,
+        interval=0.0,
+    )
+
+    assert window.handle == 8
+    assert match.state_id == "05_add"
+    assert focused == [8]
+
+
+def test_wait_for_screen_rejects_a_different_screen_after_focus(monkeypatch) -> None:
+    answers = iter([_known("03_entry", 7), _known("03_entry", 7)])
+    monkeypatch.setattr(fact, "detect", lambda table, process: next(answers))
+    monkeypatch.setattr(fact, "get_window", lambda handle: _window(handle))
+    monkeypatch.setattr(fact, "focus_window", lambda window: True)
+
+    with pytest.raises(fact.FactError, match="expected screen '05_add'"):
+        fact.wait_for_screen(
+            _table(),
+            config=AppConfig(process_name=fact.FACT_PROCESS),
+            expected_state="05_add",
+            expected_handle=8,
+            seconds=0.0,
+            interval=0.0,
+        )
+
+
 def test_wait_for_screen_fails_with_the_recognisers_own_message(monkeypatch) -> None:
     monkeypatch.setattr(
         fact, "detect", lambda table, process: StateMatch(state_id=POPUP, detail="popup")

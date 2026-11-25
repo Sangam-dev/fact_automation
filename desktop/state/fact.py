@@ -163,6 +163,8 @@ def wait_for_screen(
     interval: float = DEFAULT_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
     output: Callable[[str], None] | None = None,
+    expected_state: str | None = None,
+    expected_handle: int | None = None,
 ) -> tuple[WindowInfo, StateMatch]:
     """Wait until FACT shows a screen the state table knows, then attach.
 
@@ -176,32 +178,81 @@ def wait_for_screen(
     last: StateMatch | None = None
     while True:
         match = detect_state(table)
-        if match.known and match.window is not None and match.window.handle:
+        last = match
+
+        handle = expected_handle
+        if (
+            handle is None
+            and match.known
+            and match.window is not None
+            and (expected_state is None or match.state_id == expected_state)
+        ):
+            handle = int(match.window.handle or 0) or None
+
+        window = None
+        if handle is not None:
             try:
-                window = get_window(int(match.window.handle))
+                window = get_window(handle)
             except WindowError:
                 window = None
-            if window is not None:
-                if config is not None and config.require_foreground:
-                    focus_window(window)
+
+        if window is not None:
+            if config is not None and config.require_foreground:
+                focus_window(window)
+                try:
+                    window = get_window(window.handle)
+                except WindowError:
+                    window = None
+
+            if window is not None and (
+                expected_state is not None or expected_handle is not None
+            ):
+                # Focusing or repinning an application can reorder its sibling
+                # windows. Confirm the requested state/handle after focus and
+                # before returning a window that could receive input.
+                confirmed = detect_state(table)
+                confirmed_handle = (
+                    int(confirmed.window.handle or 0)
+                    if confirmed.window is not None
+                    else 0
+                )
+                matches_state = (
+                    expected_state is None or confirmed.state_id == expected_state
+                )
+                matches_handle = (
+                    expected_handle is None or confirmed_handle == expected_handle
+                )
+                if confirmed.known and matches_state and matches_handle:
+                    match = confirmed
                     try:
-                        window = get_window(window.handle)
+                        window = get_window(confirmed_handle)
                     except WindowError:
                         window = None
-                if window is not None:
-                    # Keep the whole app pinned, not just this window: a form
-                    # FACT opens later is lifted with it instead of appearing
-                    # behind the pinned one.
-                    if config is None or config.pin_window:
-                        keep_windows_pinned(window.process_name)
-                    return window, match
-        last = match
+                else:
+                    last = confirmed
+                    window = None
+
+            if window is not None:
+                # Keep the whole app pinned, not just this window: a form FACT
+                # opens later is lifted with it instead of appearing behind it.
+                if config is None or config.pin_window:
+                    keep_windows_pinned(window.process_name)
+                return window, match
+
         if time.monotonic() >= deadline:
             break
         if output is not None and last is not None:
             output(f"  waiting for a known FACT screen (now {last.state_id})")
         sleep(interval)
+
     message = last.message() if last is not None else "FACT is not running"
+    if expected_state is not None or expected_handle is not None:
+        expected = []
+        if expected_state is not None:
+            expected.append(f"screen {expected_state!r}")
+        if expected_handle is not None:
+            expected.append(f"window {expected_handle}")
+        raise FactError(f"expected {' on '.join(expected)}, but {message}")
     raise FactError(message)
 
 
@@ -210,9 +261,17 @@ def attach(
     *,
     table: StateTable | None = None,
     seconds: float = DEFAULT_WAIT_SECONDS,
+    expected_state: str | None = None,
+    expected_handle: int | None = None,
 ) -> WindowInfo:
-    """The current FACT window, suitable for ``inspect_window``/``capture``."""
-    window, _match = wait_for_screen(table, config=config, seconds=seconds)
+    """Attach to the current FACT window, optionally requiring a known screen."""
+    window, _match = wait_for_screen(
+        table,
+        config=config,
+        seconds=seconds,
+        expected_state=expected_state,
+        expected_handle=expected_handle,
+    )
     return window
 
 
