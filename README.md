@@ -1,23 +1,20 @@
 # FACT Automation — Reusable Automation Foundation
 
-Windows desktop-automation foundation for **FACT ERP.NG**, refactored from the
-former Excel desktop agent. It now contains only reusable infrastructure: the
-interactive wizard, AI GUI understanding and step planning, screenshot and UIA
-inspection, the multistep execution engine, run-state persistence/resume, and
-the safety/locking layer. There is no Excel reader/writer, row pipeline or
-workbook state left in the codebase.
-
-No FACT-specific workflows, state engine, webhook receiver or transaction queue
-exist yet; see `docs/fact_adaptation_roadmap.md` for that work.
+Windows desktop automation for **FACT ERP.NG**. The repository contains reusable
+GUI automation, planning, safety, and state infrastructure, plus a registered
+sales-order automation and an authenticated local API/queue that dispatches it
+through a worker in the logged-in Windows session. It does not read or write
+Excel workbooks.
 
 ## Layout
 
 ```text
 fact_automation/
 ├── main.py                  # entrypoint (python main.py --help)
-├── cli.py                   # command dispatch: inspect, ground, safety, form, wizard, check
-├── requirements.txt
-├── pyproject.toml
+├── cli.py                   # command dispatch for inspection, forms, automations, wizard, checks
+├── requirements.txt         # runtime dependencies
+├── pyproject.toml           # package metadata and development dependencies
+├── api/                     # authenticated sales-order API, SQLite queue, desktop worker
 ├── ai/
 │   ├── providers/           # Gemini client, retries, cost guards, AI call log
 │   ├── planners/            # grounding and one-instruction -> step plan
@@ -33,25 +30,33 @@ fact_automation/
 │   └── input/               # mouse/keyboard/clipboard control, scrolling
 ├── execution/
 │   ├── actions/             # step models and the ordered fill/click engine
-│   ├── workflows/           # single-record run: attach, execute, save, verify
+│   ├── forms/               # form maps and deterministic sale-order filling
+│   ├── scripts/             # registered automation step scripts
+│   ├── workflows/           # workflow and registered-automation runners
 │   └── verification/        # target resolution, read-back, save evidence, list search
 ├── core/
-│   ├── config.py            # pydantic config models (no workbook/row concepts)
+│   ├── automation/          # automation registry, validation, resume, segments
+│   ├── config.py            # Pydantic config models
 │   ├── state/               # run state, atomic writes, run lock
 │   ├── safety/              # hotkeys, input lock, overlay, watchdog, controller
 │   ├── logging/             # rotating logs + secret redaction
 │   └── runtime/             # shared errors and pause guard
 ├── config/
-│   ├── prompts/             # AI prompt templates (runtime requirement)
+│   ├── automations/         # registered automation definitions and launchers
 │   ├── examples/            # example workflow JSON and sample values JSON
-│   ├── generated/           # wizard output (gitignored)
-│   └── schemas/             # where the pydantic schemas live (see its README)
+│   ├── forms/               # form maps and sample payloads
+│   ├── prompts/             # AI prompt templates (runtime requirement)
+│   ├── segments/            # designed automation segments
+│   └── states/              # known FACT screen definitions
 ├── data/                    # runtime output (logs, state, screenshots, AI logs)
 ├── tests/                   # unit + desktop integration tests
-└── docs/                    # audit, refactoring report, dependency map, roadmap
+├── docs/                    # architecture notes, historical audits, and roadmap
 ```
 
-Modules are grouped into top-level packages (`ai`, `wizard`, `desktop`,
+The API and desktop worker have their own setup and safety notes in
+[`api/README.md`](api/README.md).
+
+Modules are grouped into top-level packages (`api`, `ai`, `wizard`, `desktop`,
 `execution`, `core`) with absolute imports, so no module depends on the old
 `automation/` package or on the source project.
 
@@ -61,12 +66,12 @@ Modules are grouped into top-level packages (`ai`, `wizard`, `desktop`,
 python -m venv myvenv
 myvenv/Scripts/python.exe -m pip install -r requirements.txt
 myvenv/Scripts/python.exe -m pip install pytest
+# Set GEMINI_API_KEY in the environment or in a local .env file.
 ```
 
 ## Run
 
 ```bash
-cp .env.example .env        # add GEMINI_API_KEY
 myvenv/Scripts/python.exe main.py --check        # environment report
 myvenv/Scripts/python.exe main.py --agent        # interactive wizard
 myvenv/Scripts/python.exe main.py form run --values config/examples/values.example.json
@@ -93,4 +98,4 @@ myvenv/Scripts/python.exe -m pytest tests/integration # needs a live Windows for
 - `docs/project_audit.md` — what was in the destination, classified
 - `docs/refactoring_report.md` — retained/removed/modified/relocated modules
 - `docs/dependency_map.md` — dependency chains and entry points
-- `docs/fact_adaptation_roadmap.md` — remaining coupling and FACT work ahead
+- `docs/fact_adaptation_roadmap.md` — adaptation notes and planned work

@@ -272,7 +272,7 @@ class SafetyConfig(BaseModel):
     @model_validator(mode="after")
     def _distinct_hotkeys(self) -> "SafetyConfig":
         values = [self.stop_hotkey, self.pause_hotkey, self.resume_hotkey]
-        if len(values) != len(set(values)):
+        if len(values) != len(set(values)):  # list holds all values but the set removes duplicates
             raise ValueError(
                 "stop, pause, and resume must use different hotkeys: "
                 + ", ".join(values)

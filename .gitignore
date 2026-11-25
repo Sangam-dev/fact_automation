@@ -10,7 +10,8 @@ myvenv/
 .pytest_cache/
 .coverage
 htmlcov/
-scripts/
+scripts/*
+!scripts/uia_inspector.py
 # Deterministic fillers are part of registered automations, not generated data.
 !execution/scripts/
 !execution/scripts/*.py
@@ -20,6 +21,8 @@ data/ai_logs/*
 data/state/*
 data/annotated/*
 data/logs/*
+data/api_runs/*
+data/api_runs.sqlite3
 data/grounding/*
 data/steps/*
 !data/**/.gitkeep
@@ -31,3 +34,4 @@ data/steps/*
 config/generated/
 fact_epr_ai_automation_plan.md
 recorder.py
+docs/
