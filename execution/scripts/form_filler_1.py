@@ -156,8 +156,11 @@ def check(order):
 
     header = order["header"]
     known = {h[0] for h in HEADER}
+    # Remarks is consumed by the separate Remarks dialog filler, not typed into
+    # the Sale Order header, but it may live beside header fields in the payload.
+    auxiliary_header_keys = {"remarks"}
     for key in header:
-        if key not in known:
+        if key not in known and key not in auxiliary_header_keys:
             errs.append(f"header: unknown field '{key}' (known: {sorted(known)})")
 
     lines = order.get("lines")
