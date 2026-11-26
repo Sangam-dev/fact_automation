@@ -1,16 +1,31 @@
 {
   "header": {
-    "order_date": "2083/03/32",
     "proforma_no": "TEST",
     "customer_order_no": "2222",
     "currency": "NPR",
-    "customer_code": "CE-CUS2542",
-    "salesman_code": "1534",
-    "document_class": "R"
+    "customer_code": "CE-1008",
+    "document_class": "F",
+    "remarks": "hello world"
+    
   },
   "lines": [
-    { "product_code": "BRM-003", "quantity": 1000, "rate": 100 },
-    { "product_code": "BRM-003", "quantity": 1000, "rate": 100 },
-    { "product_code": "BRM-003", "quantity": 1001, "rate": 200 }
+    {
+      "product_code": "FG-0001",
+      "quantity": 1000,
+      "unitcode": "BAG",
+      "rate": 0
+    },
+    {
+      "product_code": "FG-0001",
+      "quantity": 1000,
+      "unitcode": "MT",
+      "rate": 0
+    },
+    {
+      "product_code": "FG-0001",
+      "quantity": 1001,
+      "unitcode": "MT",
+      "rate": 0
+    }
   ]
 }

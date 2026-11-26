@@ -4,8 +4,17 @@
     "customer_order_no": "2222",
     "currency": "NPR",
     "customer_code": "CE-1008",
-    "document_class": "F"
+    "document_class": "F",
+    "remarks": "hello world" 
   },
+  "paymentMethod": "BG",
+  "deliveryAddress": "Kathmandu",
+  "deliveryContact": "John Doe",
+  "deliveryContactNumber": "9821522626",
+  "plant": "BHAIRAHAWA",
+  "truckArrangement": "SELF",
+  "vehicleNumber": "BA 1 PA 1234",
+  "order_remarks": "deposit 40000",
   "lines": [
     {
       "product_code": "FG-0001",

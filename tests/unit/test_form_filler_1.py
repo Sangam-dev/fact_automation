@@ -19,6 +19,7 @@ def test_updated_sample_payload_normalizes_and_validates() -> None:
     assert header["proforma_no"] == "TEST"
     assert header["customer_order_no"] == "2222"
     assert header["customer_code"] == "CE-1008"
+    assert header["remarks"] == "hello world"
     assert len(lines) == 3
     assert [line["unitcode"] for line in lines] == ["BAG", "MT", "MT"]
 

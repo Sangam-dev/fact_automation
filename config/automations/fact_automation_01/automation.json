@@ -86,6 +86,38 @@
         "resume": "restart",
         "note": ""
       }
+    },
+    {
+      "id": "06-run-remarks-filler",
+      "action": "run",
+      "script": "execution/scripts/remarks_filler.py",
+      "args": [
+        "{values_file}"
+      ],
+      "timeout_seconds": 900.0,
+      "optional": false,
+      "per_row": false,
+      "checkpoint": {
+        "state": "05_add",
+        "resume": "restart",
+        "note": "Fill and confirm Remarks"
+      }
+    },
+    {
+      "id": "07-run-udf-filler",
+      "action": "run",
+      "script": "execution/scripts/udf_filler.py",
+      "args": [
+        "{values_file}"
+      ],
+      "timeout_seconds": 900.0,
+      "optional": false,
+      "per_row": false,
+      "checkpoint": {
+        "state": "05_add",
+        "resume": "restart",
+        "note": "Fill and confirm the Global UDF and SMS entry"
+      }
     }
   ],
   "save": {

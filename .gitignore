@@ -26,7 +26,7 @@ data/api_runs.sqlite3
 data/grounding/*
 data/steps/*
 !data/**/.gitkeep
-
+data/
 # Logs
 *.log
 
@@ -35,3 +35,4 @@ config/generated/
 fact_epr_ai_automation_plan.md
 recorder.py
 docs/
+api/

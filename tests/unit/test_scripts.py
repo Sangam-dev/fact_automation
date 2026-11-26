@@ -125,5 +125,13 @@ def test_the_projects_own_filler_is_in_the_library() -> None:
 
     script_ids = [entry.id for entry in scripts]
     assert "form_filler_1" in script_ids
+    assert "remarks_filler" in script_ids
+    assert "udf_filler" in script_ids
     assert "_form_filler_template" not in script_ids
     assert get_script("form_filler_1").path == "execution/scripts/form_filler_1.py"
+    remarks_script = get_script("remarks_filler")
+    assert remarks_script.path == "execution/scripts/remarks_filler.py"
+    assert "Remarks" in remarks_script.summary
+    udf_script = get_script("udf_filler")
+    assert udf_script.path == "execution/scripts/udf_filler.py"
+    assert "Global UDF" in udf_script.summary
