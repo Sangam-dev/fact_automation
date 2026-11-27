@@ -60,7 +60,7 @@
         "automation_id": "pgbar",
         "target_percent": 100,
         "timeout_seconds": 120,
-        "stable_reads": 3
+        "stable_reads": 2
       },
       "args": [],
       "optional": false,

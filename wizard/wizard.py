@@ -181,7 +181,14 @@ def _describe_step(step: dict) -> str:
         return f"press {step.get('keys', '')!r}"
     if action in ("click", "double_click"):
         verb = "double-click" if action == "double_click" else "click"
-        return f"{verb} {step.get('button', '')!r}"
+        description = f"{verb} {step.get('button', '')!r}"
+        wait = step.get("wait_for_progress")
+        if action == "click" and wait:
+            description += (
+                f" after progress bar {wait.get('automation_id', '')!r} reaches "
+                f"{wait.get('target_percent', 100):g}%"
+            )
+        return description
     label = step.get("field") or step.get("key", "")
     return f"fill {label!r} from field {step.get('key', '')!r}"
 
@@ -196,7 +203,13 @@ def _form_steps(plan: Any) -> list[Any]:
     )
 
     if plan.kind == "click":
-        return [ClickStep(action="click", button=plan.label)]
+        return [
+            ClickStep(
+                action="click",
+                button=plan.label,
+                wait_for_progress=plan.wait_for_progress,
+            )
+        ]
     if plan.kind == "double_click":
         return [DoubleClickStep(action="double_click", button=plan.label)]
     if plan.kind == "key":
@@ -219,6 +232,10 @@ def _segment_steps(segment: Any) -> list[dict[str, Any]]:
         entry: dict[str, Any] = {"action": step.action, "optional": step.optional}
         if step.action in ("click", "double_click"):
             entry["button"] = step.button
+            if step.wait_for_progress is not None:
+                entry["wait_for_progress"] = (
+                    step.wait_for_progress.model_dump()
+                )
         elif step.action == "key":
             entry["keys"] = step.keys
         elif step.action == "run":
@@ -254,6 +271,14 @@ def _print_step_plan(
         print(f"    1. double-click {plan.label!r}")
     elif plan.kind == "click":
         print(f"    1. click {plan.label!r}")
+        if plan.wait_for_progress is not None:
+            wait = plan.wait_for_progress
+            print(
+                f"       after progress bar {wait.automation_id!r} reaches "
+                f"{wait.target_percent:g}% "
+                f"(timeout {wait.timeout_seconds:g}s; "
+                f"{wait.stable_reads} stable reads)"
+            )
     else:
         for position, fill in enumerate(plan.fills, start=1):
             detail = types.get(fill.key, "?")
@@ -828,7 +853,15 @@ def run_wizard(
         # first step, which the app has already left behind.
         authored = live.match.state_id
         if plan.kind in ("click", "double_click"):
-            steps.append({"action": plan.kind, "button": plan.label})
+            step_data: dict[str, Any] = {
+                "action": plan.kind,
+                "button": plan.label,
+            }
+            if plan.wait_for_progress is not None:
+                step_data["wait_for_progress"] = (
+                    plan.wait_for_progress.model_dump()
+                )
+            steps.append(step_data)
             authored_states.append(authored)
         elif plan.kind == "key":
             steps.append({"action": "key", "keys": plan.keypress})

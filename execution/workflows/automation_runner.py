@@ -567,6 +567,7 @@ def run_automation(
             record = steps[offset + position - 1]
             expected = record.checkpoint.state
             spot = f"{where}, step {position}" if where else f"step {offset + position}"
+            checkpoint_started = time.monotonic()
             match = _wait_for_state(
                 detect_now,
                 expected,
@@ -574,6 +575,7 @@ def run_automation(
                 interval=checkpoint_interval,
                 sleep=sleep,
             )
+            checkpoint_elapsed = time.monotonic() - checkpoint_started
             if match.state_id != expected:
                 if _apply_rule(spot, expected, match):
                     return
@@ -584,7 +586,10 @@ def run_automation(
                     "If you clear this by hand, teach it: python cli.py "
                     f"automation learn {name} --click \"OK\" --expect {expected}"
                 )
-            output(f"  checkpoint {expected}: ok ({spot})")
+            output(
+                f"  checkpoint {expected}: ok ({spot}, "
+                f"{checkpoint_elapsed:.2f}s)"
+            )
 
         return checkpoint_before
 

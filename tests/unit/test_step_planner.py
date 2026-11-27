@@ -109,6 +109,72 @@ def test_a_click_resolves_to_the_live_button_name() -> None:
     assert plan.fills == ()
 
 
+def test_an_explicit_progress_wait_is_bound_to_a_live_progress_bar() -> None:
+    progress = _candidate(
+        "P1", "Loading", "ProgressBar", automation_id="pgbar"
+    )
+    plan = parse_step_plan(
+        {
+            "kind": "click",
+            "button": "Add New",
+            "wait_for_progress": {
+                "automation_id": "pgbar",
+                "target_percent": 100,
+                "timeout_seconds": 120,
+                "stable_reads": 2,
+            },
+        },
+        candidates=(*CANDIDATES, progress),
+        fields=HEADERS,
+        instruction="click Add only after the blue bar reaches 100 percent",
+    )
+
+    assert plan.wait_for_progress is not None
+    assert plan.wait_for_progress.automation_id == "pgbar"
+    assert plan.wait_for_progress.target_percent == 100
+    assert plan.wait_for_progress.stable_reads == 2
+
+
+def test_an_explicit_progress_wait_cannot_be_omitted() -> None:
+    with pytest.raises(StepPlanError, match="no progress condition was planned"):
+        parse_step_plan(
+            {"kind": "click", "button": "Add New"},
+            candidates=CANDIDATES,
+            fields=HEADERS,
+            instruction="click Add only after the blue bar reaches 100 percent",
+        )
+
+
+def test_a_progress_wait_must_match_exactly_one_live_progress_bar() -> None:
+    progress = _candidate(
+        "P1", "Loading", "ProgressBar", automation_id="pgbar"
+    )
+    wait = {"automation_id": "invented-bar", "target_percent": 100}
+    with pytest.raises(StepPlanError, match="matched 0 live ProgressBar"):
+        parse_step_plan(
+            {
+                "kind": "click",
+                "button": "Add New",
+                "wait_for_progress": wait,
+            },
+            candidates=(*CANDIDATES, progress),
+            fields=HEADERS,
+        )
+
+
+def test_a_progress_wait_is_not_allowed_on_a_double_click() -> None:
+    with pytest.raises(StepPlanError, match="only be attached to a click"):
+        parse_step_plan(
+            {
+                "kind": "double_click",
+                "button": "Add New",
+                "wait_for_progress": {"automation_id": "pgbar"},
+            },
+            candidates=CANDIDATES,
+            fields=HEADERS,
+        )
+
+
 def test_a_pane_or_hyperlink_counts_as_a_button() -> None:
     candidates = (
         _candidate("W1", "Login", "Pane"),

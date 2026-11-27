@@ -247,6 +247,43 @@ def test_pinning_an_app_lifts_new_windows_and_leaves_pinned_ones_alone(
     assert calls == [(10, win32con.HWND_NOTOPMOST)]
 
 
+@pytest.mark.parametrize("pin", [True, False])
+def test_pinning_preserves_fact_sibling_window_order(
+    monkeypatch: pytest.MonkeyPatch,
+    pin: bool,
+) -> None:
+    from types import SimpleNamespace
+
+    from desktop.windows import window as windows
+    import win32con
+
+    # EnumWindows supplies top-to-bottom order. Moving each changed window to
+    # the top of a z-order band in that same order would reverse the siblings.
+    siblings = [10, 20]
+    windows_found = [
+        SimpleNamespace(handle=handle, process_name="FACTERPNG.exe", title=str(handle))
+        for handle in siblings
+    ]
+    operations: list[tuple[int, int]] = []
+
+    monkeypatch.setattr(windows, "list_windows", lambda: windows_found)
+    monkeypatch.setattr(windows, "is_topmost", lambda _handle: not pin)
+
+    def set_window_pos(handle, insert_after, *_args):
+        operations.append((handle, insert_after))
+        siblings.remove(handle)
+        siblings.insert(0, handle)
+
+    monkeypatch.setattr(windows.win32gui, "SetWindowPos", set_window_pos)
+
+    result = windows.pin_app_windows("FACTERPNG.exe", pin=pin)
+
+    expected_insert = win32con.HWND_TOPMOST if pin else win32con.HWND_NOTOPMOST
+    assert result == [20, 10]
+    assert operations == [(20, expected_insert), (10, expected_insert)]
+    assert siblings == [10, 20]
+
+
 def test_release_pinned_windows_stops_keeper_before_unpinning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

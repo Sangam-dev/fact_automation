@@ -13,6 +13,7 @@ result. Nothing here is used when rows are replayed.
 from __future__ import annotations
 
 import difflib
+import re
 from dataclasses import dataclass
 from typing import Any, Literal, Sequence
 
@@ -26,6 +27,7 @@ from desktop.types import (
     UIACandidate,
 )
 from desktop.screenshots.images import prepare_image
+from execution.actions.models import ProgressWait
 from ai.providers.gemini import GeminiClient
 from ai.prompts.loader import format_candidates, load_prompt, render_prompt
 
@@ -61,6 +63,7 @@ class StepPlan:
     keypress: str = ""
     fills: tuple[PlannedFill, ...] = ()
     confidence: float = 0.0
+    wait_for_progress: ProgressWait | None = None
 
     @property
     def keys(self) -> tuple[str, ...]:
@@ -97,6 +100,7 @@ class _Response(BaseModel):
     fills: list[_Fill] = Field(default_factory=list)
     reason: str = ""
     confidence: float = Field(default=0.0, ge=0, le=1)
+    wait_for_progress: ProgressWait | None = None
 
     @field_validator("button", "keys", "reason", mode="before")
     @classmethod
@@ -192,11 +196,25 @@ def suggestions(
     return picked[:limit]
 
 
+def _requests_progress_wait(instruction: str) -> bool:
+    """True when the user explicitly gates an action on a progress bar."""
+    mentions_bar = re.search(
+        r"\b(?:progress|loading|blue)\s+bar\b", instruction, re.IGNORECASE
+    )
+    mentions_wait = re.search(
+        r"\b(?:wait|after|until|once|when|reaches?|reached)\b",
+        instruction,
+        re.IGNORECASE,
+    )
+    return bool(mentions_bar and mentions_wait)
+
+
 def parse_step_plan(
     data: dict[str, Any],
     *,
     candidates: Sequence[UIACandidate],
     fields: Sequence[str],
+    instruction: str = "",
     editable_types: frozenset[str] = EDITABLE_TYPES,
     button_types: frozenset[str] = BUTTON_TYPES,
 ) -> StepPlan:
@@ -212,6 +230,8 @@ def parse_step_plan(
         raise StepUnsupported(
             response.reason.strip() or "the instruction is not something this mode can do yet"
         )
+    if response.wait_for_progress is not None and response.kind != "click":
+        raise StepPlanError("a progress wait can only be attached to a click")
 
     if response.kind == "key":
         spec = " ".join(response.keys.split())
@@ -224,6 +244,26 @@ def parse_step_plan(
         )
 
     if response.kind in ("click", "double_click"):
+        if response.kind == "click" and _requests_progress_wait(instruction):
+            if response.wait_for_progress is None:
+                raise StepPlanError(
+                    "the instruction asks to wait for a progress bar, but no "
+                    "progress condition was planned; correct or retry the step"
+                )
+        if response.wait_for_progress is not None:
+            wait_id = response.wait_for_progress.automation_id.strip().casefold()
+            progress_bars = [
+                item
+                for item in candidates
+                if item.control_type == "ProgressBar"
+                and item.automation_id.strip().casefold() == wait_id
+            ]
+            if len(progress_bars) != 1:
+                raise StepPlanError(
+                    f"progress bar id {response.wait_for_progress.automation_id!r} "
+                    f"matched {len(progress_bars)} live ProgressBar controls; "
+                    "the wait must name exactly one bar on this screen"
+                )
         label = response.button.strip()
         buttons = _named(candidates, button_types)
         if not label:
@@ -247,7 +287,10 @@ def parse_step_plan(
                 message += "; it does have " + ", ".join(repr(name) for name in near)
             raise StepPlanError(message)
         return StepPlan(
-            kind=response.kind, label=button.label, confidence=response.confidence
+            kind=response.kind,
+            label=button.label,
+            confidence=response.confidence,
+            wait_for_progress=response.wait_for_progress,
         )
 
     if not response.fills:
@@ -352,7 +395,12 @@ def plan_step(
         correction,
     )
     response = client.generate_json(prompt, image)
-    return parse_step_plan(response.data, candidates=candidates, fields=fields)
+    return parse_step_plan(
+        response.data,
+        candidates=candidates,
+        fields=fields,
+        instruction=instruction,
+    )
 
 
 __all__ = [

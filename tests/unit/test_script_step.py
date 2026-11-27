@@ -17,7 +17,7 @@ import json
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -26,6 +26,7 @@ from core.config import AgentConfig
 from desktop.state.recognizer import StateMatch
 from desktop.state.states import StateTable
 from desktop.types import Rect, WindowInfo
+from desktop.uia.uia import UIAInspection
 from execution.actions import engine as form_steps
 from execution.actions.engine import execute_form_steps, script_command
 from execution.actions.models import ClickStep, ScriptStep
@@ -245,6 +246,47 @@ def test_the_script_runs_and_the_plan_continues_after_it(
     assert result.steps_run == 2
     assert json.loads(recorded.read_text(encoding="utf-8")) == [str(values), "job-7"]
     assert clicked == [(60, 40)]
+
+
+def test_consecutive_scripts_skip_the_redundant_intermediate_screen_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        form_steps, "script_command", lambda *_args, **_kwargs: (["script"], "")
+    )
+    monkeypatch.setattr(
+        form_steps, "run_script", lambda *_args, **_kwargs: (False, "")
+    )
+    checked: list[int] = []
+    refreshed: list[int] = []
+    inspection = FakeInspection()
+
+    def reacquire():
+        refreshed.append(1)
+        return _window(), cast(UIAInspection, inspection)
+
+    result = execute_form_steps(
+        [
+            ScriptStep(action="run", script="first.py"),
+            ScriptStep(action="run", script="second.py"),
+        ],
+        {},
+        window=_window(),
+        inspection=cast(UIAInspection, inspection),
+        labels={},
+        types={},
+        before_step=lambda index, _step: checked.append(index),
+        reacquire=reacquire,
+        settle_seconds=0,
+        output=lambda _line: None,
+    )
+
+    assert result.ok, result.problems
+    assert result.steps_run == 2
+    assert checked == [1, 2]
+    # The second script's precondition remains; only the redundant read after
+    # the first script is skipped. The final read is still needed for Save.
+    assert refreshed == [1]
 
 
 def test_a_script_that_fails_stops_the_plan_before_the_next_step(

@@ -27,11 +27,33 @@
       },
       {
         "action": "click",
-        "button": "&Add"
+        "button": "&Add",
+        "wait_for_progress": {
+          "automation_id": "pgbar",
+          "target_percent": 100.0,
+          "timeout_seconds": 120.0,
+          "stable_reads": 3
+        }
       },
       {
         "action": "run",
         "script": "execution/scripts/form_filler_1.py",
+        "args": [
+          "{values_file}"
+        ],
+        "timeout_seconds": 900.0
+      },
+      {
+        "action": "run",
+        "script": "execution/scripts/remarks_filler.py",
+        "args": [
+          "{values_file}"
+        ],
+        "timeout_seconds": 900.0
+      },
+      {
+        "action": "run",
+        "script": "execution/scripts/udf_filler.py",
         "args": [
           "{values_file}"
         ],

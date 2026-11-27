@@ -301,7 +301,10 @@ def pin_app_windows(process_name: str, pin: bool = True) -> list[int]:
     insert_after = win32con.HWND_TOPMOST if pin else win32con.HWND_NOTOPMOST
     flags = win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
     pinned: list[int] = []
-    for window in list_windows():
+    # EnumWindows yields top-to-bottom. SetWindowPos inserts each changed window
+    # at the top of its z-order band, so process bottom-to-top to preserve the
+    # app's existing sibling-window order when pinning and when releasing it.
+    for window in reversed(list_windows()):
         if not _process_matches(window.process_name, process_name):
             continue
         topmost = is_topmost(window.handle)

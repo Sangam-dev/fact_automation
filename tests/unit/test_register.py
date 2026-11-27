@@ -317,6 +317,36 @@ def test_a_proved_workflow_is_registered(tmp_path: Path) -> None:
     assert [step.checkpoint.state for step in stored.steps] == ["04_view", "05_add"]
 
 
+def test_progress_wait_survives_registration_and_runner_conversion(
+    tmp_path: Path,
+) -> None:
+    data = workflow()
+    data["workflow"]["steps"][0]["wait_for_progress"] = {
+        "automation_id": "pgbar",
+        "target_percent": 100,
+        "timeout_seconds": 120,
+        "stable_reads": 2,
+    }
+    path = tmp_path / "workflow-with-progress.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = go(tmp_path, config_path=path)
+
+    assert result.status == REGISTERED
+    stored = registry.load(NAME, tmp_path / "automations")
+    wait = stored.steps[0].wait_for_progress
+    assert wait is not None
+    assert wait.automation_id == "pgbar"
+    assert wait.target_percent == 100
+    assert wait.stable_reads == 2
+
+    runnable = stored.to_config()
+    click = runnable.workflow.steps[0]
+    assert click.wait_for_progress is not None
+    assert click.wait_for_progress.automation_id == "pgbar"
+    assert click.wait_for_progress.stable_reads == 2
+
+
 def test_the_registered_plan_is_runnable_by_the_runner(tmp_path: Path) -> None:
     result = go(tmp_path)
     assert result.automation is not None

@@ -137,6 +137,10 @@ def _step_payload(step: FormStep, index: int, state: str) -> dict:
     }
     if isinstance(step, (ClickStep, DoubleClickStep)):
         payload["button"] = step.button
+        if isinstance(step, ClickStep) and step.wait_for_progress is not None:
+            payload["wait_for_progress"] = (
+                step.wait_for_progress.model_dump()
+            )
     elif isinstance(step, KeyStep):
         payload["keys"] = step.keys
     else:

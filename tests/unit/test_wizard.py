@@ -29,7 +29,7 @@ from ai.planners.step_planner import PlannedFill, StepPlan
 from core.config import load_config
 from desktop.state.fact import FactError
 from desktop.state.recognizer import StateMatch, WindowView
-from execution.actions.models import ClickStep, FillStep
+from execution.actions.models import ClickStep, FillStep, ProgressWait
 
 
 def test_clean_path_removes_quotes_and_whitespace() -> None:
@@ -61,6 +61,16 @@ def test_describe_step_names_the_work() -> None:
         "click 'Add New'"
     )
     assert _describe_step(
+        {
+            "action": "click",
+            "button": "&Add",
+            "wait_for_progress": {
+                "automation_id": "pgbar",
+                "target_percent": 100,
+            },
+        }
+    ) == "click '&Add' after progress bar 'pgbar' reaches 100%"
+    assert _describe_step(
         {"action": "fill", "key": "Amount", "field": "Total"}
     ) == "fill 'Total' from field 'Amount'"
 
@@ -69,6 +79,17 @@ def test_form_steps_turn_a_click_plan_into_a_click_step() -> None:
     steps = _form_steps(StepPlan(kind="click", label="Add New"))
 
     assert steps == [ClickStep(action="click", button="Add New")]
+
+
+def test_form_steps_keep_a_clicks_progress_precondition() -> None:
+    wait = ProgressWait(automation_id="pgbar", stable_reads=2)
+    steps = _form_steps(
+        StepPlan(kind="click", label="&Add", wait_for_progress=wait)
+    )
+
+    assert steps == [
+        ClickStep(action="click", button="&Add", wait_for_progress=wait)
+    ]
 
 
 def test_form_steps_turn_a_fill_plan_into_one_step_per_field() -> None:
@@ -86,6 +107,30 @@ def test_form_steps_turn_a_fill_plan_into_one_step_per_field() -> None:
         FillStep(action="fill", key="Invoice Number", field="Invoice No."),
         FillStep(action="fill", key="Amount", field="Total"),
     ]
+
+
+def test_the_plan_screen_shows_a_clicks_progress_precondition(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan = StepPlan(
+        kind="click",
+        label="&Add",
+        wait_for_progress=ProgressWait(automation_id="pgbar", stable_reads=2),
+    )
+
+    _print_step_plan(
+        plan,
+        index=4,
+        instruction="click Add after the blue bar reaches 100 percent",
+        screenshot=Path("shot.png"),
+        field_names=[],
+        types={},
+    )
+
+    out = capsys.readouterr().out
+    assert "click '&Add'" in out
+    assert "after progress bar 'pgbar' reaches 100%" in out
+    assert "2 stable reads" in out
 
 
 def test_the_plan_screen_lists_the_actions_and_the_leftover_fields(
@@ -201,6 +246,35 @@ def test_the_written_config_records_the_model_from_the_environment(
     assert json.loads(path.read_text(encoding="utf-8"))["gemini"]["model"] == (
         "gemini-3.5-flash-lite"
     )
+
+
+def test_generate_config_keeps_progress_wait_on_its_click(tmp_path: Path) -> None:
+    path = _generate_config(
+        "FACT ERP.NG",
+        "FACTERPNG.exe",
+        "Save",
+        steps=[
+            {
+                "action": "click",
+                "button": "&Add",
+                "wait_for_progress": {
+                    "automation_id": "pgbar",
+                    "target_percent": 100,
+                    "timeout_seconds": 120,
+                    "stable_reads": 2,
+                },
+            }
+        ],
+        fields=[],
+        path=tmp_path / "workflow.json",
+    )
+
+    loaded = load_config(path)
+    click = loaded.workflow.steps[0]
+    assert isinstance(click, ClickStep)
+    assert click.wait_for_progress is not None
+    assert click.wait_for_progress.automation_id == "pgbar"
+    assert click.wait_for_progress.stable_reads == 2
 
 
 def test_generate_config_writes_a_loadable_workflow(tmp_path: Path) -> None:
@@ -332,6 +406,39 @@ def _segment() -> SimpleNamespace:
             ),
         ],
     )
+
+
+def test_segment_click_keeps_its_progress_wait() -> None:
+    from core.automation.model import AutomationStep
+
+    step = AutomationStep.model_validate(
+        {
+            "id": "wait-add",
+            "action": "click",
+            "button": "&Add",
+            "wait_for_progress": {
+                "automation_id": "pgbar",
+                "target_percent": 100,
+                "timeout_seconds": 120,
+                "stable_reads": 2,
+            },
+            "checkpoint": {"state": "04_view", "resume": "replay"},
+        }
+    )
+
+    assert _segment_steps(SimpleNamespace(steps=[step])) == [
+        {
+            "action": "click",
+            "optional": False,
+            "button": "&Add",
+            "wait_for_progress": {
+                "automation_id": "pgbar",
+                "target_percent": 100.0,
+                "timeout_seconds": 120.0,
+                "stable_reads": 2,
+            },
+        }
+    ]
 
 
 def test_a_chosen_segment_lands_where_it_was_chosen_in_the_plan() -> None:

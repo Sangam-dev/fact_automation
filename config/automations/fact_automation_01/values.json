@@ -1,7 +1,5 @@
 {
   "header": {
-    "proforma_no": "TEST",
-    "customer_order_no": "2222",
     "currency": "NPR",
     "customer_code": "CE-1008",
     "document_class": "F",
@@ -11,7 +9,7 @@
   "deliveryAddress": "Kathmandu",
   "deliveryContact": "John Doe",
   "deliveryContactNumber": "9821522626",
-  "plant": "BHAIRAHAWA",
+  "plant": "SUNWOL",
   "truckArrangement": "SELF",
   "vehicleNumber": "BA 1 PA 1234",
   "order_remarks": "deposit 40000",
@@ -19,18 +17,6 @@
     {
       "product_code": "FG-0001",
       "quantity": 400,
-      "unitcode": "BAG",
-      "rate": 0
-    },
-    {
-      "product_code": "FG-0003",
-      "quantity": 1000,
-      "unitcode": "MT",
-      "rate": 0
-    },
-    {
-      "product_code": "FG-0001",
-      "quantity": 101,
       "unitcode": "MT",
       "rate": 0
     }

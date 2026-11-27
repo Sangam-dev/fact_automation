@@ -391,8 +391,10 @@ def execute_form_steps(
     ) -> bool:
         """Hold a configured click until its UIA progress bar is complete."""
         nonlocal inspection
-        deadline = time.monotonic() + condition.timeout_seconds
+        wait_started = time.monotonic()
+        deadline = wait_started + condition.timeout_seconds
         stable_reads = 0
+        stable_since: float | None = None
         last_value: float | None = None
         last_issue = "no progress reading yet"
         output(
@@ -410,6 +412,7 @@ def execute_form_steps(
             except UIAError as exc:
                 last_issue = str(exc)
                 stable_reads = 0
+                stable_since = None
             else:
                 last_value, issue = _progress_percent(
                     inspection, condition.automation_id
@@ -417,15 +420,24 @@ def execute_form_steps(
                 if issue:
                     last_issue = issue
                 if last_value is not None and last_value >= condition.target_percent:
+                    if stable_reads == 0:
+                        stable_since = time.monotonic()
                     stable_reads += 1
                     if stable_reads >= condition.stable_reads:
+                        now = time.monotonic()
+                        stable_elapsed = (
+                            now - stable_since if stable_since is not None else 0.0
+                        )
                         output(
                             f"  step {step_number}: progress is "
-                            f"{last_value:g}% (ready)"
+                            f"{last_value:g}% (ready in "
+                            f"{now - wait_started:.2f}s; 100% confirmed over "
+                            f"{stable_elapsed:.2f}s)"
                         )
                         return True
                 else:
                     stable_reads = 0
+                    stable_since = None
                     if last_value is not None:
                         last_issue = f"currently {last_value:g}%"
 
@@ -490,11 +502,16 @@ def execute_form_steps(
                 )
                 break
             output(f"  step {index}: run {step.script!r}")
+            script_started = time.monotonic()
             failed, detail = run_script(
                 command,
                 timeout_seconds=step.timeout_seconds,
                 cwd=script_cwd,
                 output=output,
+            )
+            output(
+                f"  step {index}: script process finished in "
+                f"{time.monotonic() - script_started:.2f}s"
             )
             if failed:
                 message = f"step {index} (run {step.script!r}): {detail}"
@@ -507,6 +524,17 @@ def execute_form_steps(
             executed += 1
             if detail:
                 output(f"    {detail}")
+            # Consecutive run steps are independent subprocesses. The next
+            # step's precondition checks the screen before it starts, so a full
+            # attach and UIA-tree scan here would duplicate that check.
+            if (
+                before_step is not None
+                and index < len(steps)
+                and isinstance(steps[index], ScriptStep)
+            ):
+                if on_step is not None:
+                    on_step(index, step)
+                continue
             try:
                 inspection = screen_when_drawn(settle_seconds)
             except UIAError as exc:

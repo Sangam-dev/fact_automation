@@ -77,6 +77,19 @@ Apply the correction on top of the instruction. When the correction is
   `reason` instead of guessing a name.
 - `confidence` is your confidence (0 to 1) that these actions are what the
   user described.
+- A click may have an optional `wait_for_progress` precondition. Use it only
+  when the instruction explicitly says to wait for a progress/loading/blue bar
+  before clicking (for example, "click Add only after the blue bar reaches
+  100 percent"). This is still one click step; the executor waits first, then
+  clicks.
+- For that precondition, copy `automation_id` exactly from exactly one control
+  whose `type` is `ProgressBar` in the live UIA list. Never infer or invent an
+  ID. Set `target_percent` to the requested percentage (100 when omitted), and
+  leave `timeout_seconds` and `stable_reads` at 120 and 3 unless the user gives
+  a different timeout or stability requirement. If no unique live progress bar
+  exists, do not guess; return `kind` `unclear` with a reason.
+- Do not add `wait_for_progress` for double-clicks or any other action. When no
+  progress wait was requested, omit it or set it to `null`.
 
 ## Response schema
 
@@ -88,6 +101,26 @@ Apply the correction on top of the instruction. When the correction is
   "fills": [
     { "key": "invoice_number", "field": "Invoice No.", "confidence": 0.0 }
   ],
+  "wait_for_progress": null,
+  "reason": "",
+  "confidence": 0.0
+}
+```
+
+When the instruction explicitly gates a click on a progress bar, replace
+`wait_for_progress` with the condition, using the exact ID of a live
+`ProgressBar` candidate:
+
+```json
+{
+  "kind": "click",
+  "button": "Add",
+  "wait_for_progress": {
+    "automation_id": "pgbar",
+    "target_percent": 100,
+    "timeout_seconds": 120,
+    "stable_reads": 3
+  },
   "reason": "",
   "confidence": 0.0
 }

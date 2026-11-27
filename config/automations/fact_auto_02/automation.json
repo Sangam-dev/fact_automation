@@ -1,0 +1,130 @@
+{
+  "schema": "automation/1",
+  "name": "fact_auto_02",
+  "created_at": "2026-11-27T19:48:13",
+  "updated_at": "2026-11-27T19:48:13",
+  "verified": false,
+  "wait_seconds": 15.0,
+  "app": {
+    "title_contains": "",
+    "process_name": "FACTERPNG.exe",
+    "require_foreground": true,
+    "pin_window": true
+  },
+  "fields": [],
+  "steps": [
+    {
+      "id": "01-click-btnlogin",
+      "action": "click",
+      "button": "btnLogin",
+      "args": [],
+      "optional": false,
+      "per_row": false,
+      "checkpoint": {
+        "state": "01_login",
+        "resume": "replay",
+        "note": ""
+      }
+    },
+    {
+      "id": "02-click-open",
+      "action": "click",
+      "button": "Open",
+      "args": [],
+      "optional": false,
+      "per_row": false,
+      "checkpoint": {
+        "state": "02_welcome",
+        "resume": "replay",
+        "note": ""
+      }
+    },
+    {
+      "id": "03-double_click-sale-order-entry",
+      "action": "double_click",
+      "button": "Sale Order Entry",
+      "args": [],
+      "optional": false,
+      "per_row": false,
+      "checkpoint": {
+        "state": "03_entry",
+        "resume": "replay",
+        "note": ""
+      }
+    },
+    {
+      "id": "04-click-add",
+      "action": "click",
+      "button": "&Add",
+      "wait_for_progress": {
+        "automation_id": "pgbar",
+        "target_percent": 100.0,
+        "timeout_seconds": 120.0,
+        "stable_reads": 3
+      },
+      "args": [],
+      "optional": false,
+      "per_row": false,
+      "checkpoint": {
+        "state": "04_view",
+        "resume": "replay",
+        "note": ""
+      }
+    },
+    {
+      "id": "05-run-form-filler-1",
+      "action": "run",
+      "script": "execution/scripts/form_filler_1.py",
+      "args": [
+        "{values_file}"
+      ],
+      "timeout_seconds": 900.0,
+      "optional": false,
+      "per_row": false,
+      "checkpoint": {
+        "state": "05_add",
+        "resume": "restart",
+        "note": ""
+      }
+    },
+    {
+      "id": "06-run-remarks-filler",
+      "action": "run",
+      "script": "execution/scripts/remarks_filler.py",
+      "args": [
+        "{values_file}"
+      ],
+      "timeout_seconds": 900.0,
+      "optional": false,
+      "per_row": false,
+      "checkpoint": {
+        "state": "05_add",
+        "resume": "restart",
+        "note": ""
+      }
+    },
+    {
+      "id": "07-run-udf-filler",
+      "action": "run",
+      "script": "execution/scripts/udf_filler.py",
+      "args": [
+        "{values_file}"
+      ],
+      "timeout_seconds": 900.0,
+      "optional": false,
+      "per_row": false,
+      "checkpoint": {
+        "state": "05_add",
+        "resume": "restart",
+        "note": ""
+      }
+    }
+  ],
+  "save": {
+    "button": "Save && &Close",
+    "check": false,
+    "verifier": "none",
+    "footprint": [],
+    "success_pattern": ""
+  }
+}
